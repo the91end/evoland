@@ -6,7 +6,7 @@ import { DEFAULT_PARAMS, type Params } from './sim/params';
 import { GENE_NAMES } from './sim/genome';
 import type { SpeciesInfo } from './sim/species';
 import type { CellDetail, FromWorker, Stats, ToWorker } from './protocol';
-import SimWorker from './sim.worker.ts?worker';
+import SimWorker from './sim.worker.ts?worker&inline';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -72,8 +72,12 @@ function start(): void {
   pond.build(params);
   speciesColours.clear();
   closeInspector();
-  url.searchParams.set('seed', seed);
-  history.replaceState(null, '', url);
+  try {
+    url.searchParams.set('seed', seed);
+    history.replaceState(null, '', url);
+  } catch {
+    // Sandboxed hosts may refuse URL changes; the seed box still shows it.
+  }
   $<HTMLInputElement>('seed').value = seed;
   buildTune();
   send({ type: 'start', seed, params: overrides });

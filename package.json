@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "headless": "vite-node scripts/headless.ts"
+    "headless": "vite-node scripts/headless.ts",
+    "artifact": "vite build && node scripts/artifact.mjs"
   },
   "dependencies": {
     "three": "^0.186.1"
