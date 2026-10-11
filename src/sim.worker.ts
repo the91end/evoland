@@ -1,0 +1,261 @@
+/// <reference lib="webworker" />
+/**
+ * Runs the World at a fixed tick rate off the main thread and streams
+ * frames back. The page only draws.
+ */
+import { World } from './sim/world';
+import { GENE_COUNT, traitsOf } from './sim/genome';
+import type { CellDetail, Frame, FromWorker, Stats, ToWorker } from './protocol';
+
+declare const self: DedicatedWorkerGlobalScope;
+
+const FRAME_MS = 16;
+const STATS_MS = 500;
+const INSPECT_MS = 200;
+/** Never spend longer than this per loop turn, so messages stay responsive. */
+const BUDGET_MS = 30;
+
+let world: World | null = null;
+let speed = 1;
+let paused = false;
+let inspectId: number | null = null;
+
+let owed = 0;
+let lastTime = 0;
+let lastFrame = 0;
+let lastStats = 0;
+let lastInspect = 0;
+let rateTicks = 0;
+let rateStart = 0;
+let rate = 0;
+let scheduled = false;
+
+const channel = new MessageChannel();
+channel.port1.onmessage = () => {
+  scheduled = false;
+  loop();
+};
+
+function post(msg: FromWorker, transfer: Transferable[] = []): void {
+  self.postMessage(msg, transfer);
+}
+
+self.onmessage = (e: MessageEvent<ToWorker>) => {
+  const m = e.data;
+  switch (m.type) {
+    case 'start':
+      world = new World(m.seed, m.params);
+      owed = 0;
+      lastTime = performance.now();
+      rateStart = lastTime;
+      rateTicks = 0;
+      inspectId = null;
+      post({ type: 'ready', params: world.p });
+      sendFrame();
+      sendStats();
+      schedule(0);
+      break;
+    case 'speed':
+      speed = m.speed;
+      break;
+    case 'pause':
+      paused = m.paused;
+      lastTime = performance.now();
+      owed = 0;
+      if (!paused) schedule(0);
+      break;
+    case 'inspect':
+      inspectId = m.id;
+      if (world && inspectId !== null) sendInspect();
+      break;
+  }
+};
+
+function schedule(delay: number): void {
+  if (scheduled) return;
+  scheduled = true;
+  if (delay <= 0) channel.port2.postMessage(0);
+  else
+    setTimeout(() => {
+      scheduled = false;
+      loop();
+    }, delay);
+}
+
+function loop(): void {
+  if (!world || paused) return;
+  const w = world;
+  const now = performance.now();
+  owed += ((now - lastTime) / 1000) * w.p.ticksPerSecond * speed;
+  lastTime = now;
+  // Don't try to catch up more than a second of backlog.
+  owed = Math.min(owed, w.p.ticksPerSecond * speed);
+
+  const start = performance.now();
+  let ran = 0;
+  while (owed >= 1 && performance.now() - start < BUDGET_MS) {
+    w.step();
+    owed -= 1;
+    ran++;
+  }
+  rateTicks += ran;
+  const t = performance.now();
+  if (t - rateStart > 1000) {
+    rate = (rateTicks * 1000) / (t - rateStart);
+    rateTicks = 0;
+    rateStart = t;
+  }
+  if (ran > 0 && t - lastFrame >= FRAME_MS) sendFrame();
+  if (t - lastStats >= STATS_MS) sendStats();
+  if (inspectId !== null && t - lastInspect >= INSPECT_MS) sendInspect();
+
+  if (owed >= 1) schedule(0);
+  else schedule(Math.max(1, ((1 - owed) * 1000) / (w.p.ticksPerSecond * speed)));
+}
+
+function sendFrame(): void {
+  const w = world!;
+  lastFrame = performance.now();
+  const n = w.n;
+  const ids = w.id.slice(0, n);
+  const pos = new Float32Array(n * 3);
+  const vel = new Float32Array(n * 3);
+  const tag = new Float32Array(n * 3);
+  const feed = new Float32Array(n * 3);
+  const energy = new Float32Array(n);
+  const G = GENE_COUNT;
+  for (let i = 0; i < n; i++) {
+    pos[i * 3] = w.x[i];
+    pos[i * 3 + 1] = w.y[i];
+    pos[i * 3 + 2] = w.z[i];
+    vel[i * 3] = w.vx[i];
+    vel[i * 3 + 1] = w.vy[i];
+    vel[i * 3 + 2] = w.vz[i];
+    tag[i * 3] = w.genes[i * G + 5];
+    tag[i * 3 + 1] = w.genes[i * G + 6];
+    tag[i * 3 + 2] = w.genes[i * G + 7];
+    feed[i * 3] = w.shareL[i];
+    feed[i * 3 + 1] = w.shareV[i];
+    feed[i * 3 + 2] = w.shareE[i];
+    energy[i] = w.energy[i] / w.maxE[i];
+  }
+  const debris = new Float32Array(w.nd * 3);
+  for (let d = 0; d < w.nd; d++) {
+    debris[d * 3] = w.dx[d];
+    debris[d * 3 + 1] = w.dy[d];
+    debris[d * 3 + 2] = w.dz[d];
+  }
+  const frame: Frame = {
+    type: 'frame',
+    tick: w.tick,
+    sun: w.sun,
+    rate,
+    n,
+    ids,
+    pos,
+    vel,
+    radius: w.radius.slice(0, n),
+    tag,
+    feed,
+    species: w.species.slice(0, n),
+    motility: w.mot.slice(0, n),
+    energy,
+    nd: w.nd,
+    debris,
+    vents: w.vents.map((v) => ({ x: v.x, z: v.z, strength: v.strength, stock: v.stock / w.p.ventStock })),
+  };
+  post(frame, [
+    ids.buffer,
+    pos.buffer,
+    vel.buffer,
+    frame.radius.buffer,
+    tag.buffer,
+    feed.buffer,
+    frame.species.buffer,
+    frame.motility.buffer,
+    energy.buffer,
+    debris.buffer,
+  ]);
+}
+
+function sendStats(): void {
+  const w = world!;
+  lastStats = performance.now();
+  const msg: Stats = {
+    type: 'stats',
+    history: w.history,
+    species: w.speciesTracker.list(),
+    totalBorn: w.totalBorn,
+    engulfed: w.engulfed,
+    swaps: w.swaps,
+  };
+  post(msg);
+}
+
+function sendInspect(): void {
+  const w = world!;
+  lastInspect = performance.now();
+  const id = inspectId!;
+  const i = w.indexOf(id);
+  const rec = w.lineage.get(id);
+  const ancestors: CellDetail['ancestors'] = [];
+  let p = rec?.parent ?? 0;
+  while (p && ancestors.length < 12) {
+    const r = w.lineage.get(p);
+    if (!r) break;
+    ancestors.push({ id: p, ...r });
+    p = r.parent;
+  }
+  let children = 0;
+  let descendants = 0;
+  for (let k = 0; k < w.n; k++) {
+    if (w.parent[k] === id) children++;
+    let a = w.parent[k];
+    for (let depth = 0; a && depth < 12; depth++) {
+      if (a === id) {
+        descendants++;
+        break;
+      }
+      a = w.lineage.get(a)?.parent ?? 0;
+    }
+  }
+  if (i < 0) {
+    // Dead: send what the lineage remembers so the panel can say so.
+    post({
+      type: 'inspect',
+      id,
+      alive: false,
+      species: rec?.species ?? -1,
+      generation: rec?.gen ?? 0,
+      age: rec && rec.died >= 0 ? rec.died - rec.born : 0,
+      lifespan: 0,
+      energy: 0,
+      maxEnergy: 0,
+      genes: [],
+      traits: traitsOf(new Float32Array(GENE_COUNT)),
+      ancestors,
+      children,
+      descendants,
+      pos: [0, 0, 0],
+    });
+    return;
+  }
+  const g = Array.from(w.genes.subarray(i * GENE_COUNT, (i + 1) * GENE_COUNT));
+  post({
+    type: 'inspect',
+    id,
+    alive: true,
+    species: w.species[i],
+    generation: w.gen[i],
+    age: w.age[i],
+    lifespan: w.lifespan[i],
+    energy: w.energy[i],
+    maxEnergy: w.maxE[i],
+    genes: g,
+    traits: traitsOf(g),
+    ancestors,
+    children,
+    descendants,
+    pos: [w.x[i], w.y[i], w.z[i]],
+  });
+}

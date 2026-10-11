@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Evoland</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Ccircle cx=%228%22 cy=%228%22 r=%226%22 fill=%22%235fd3c6%22/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="scene"></div>
+
+    <header id="bar">
+      <strong class="brand">evoland</strong>
+      <button id="play" title="Pause or resume (space)">Pause</button>
+      <label class="speed">
+        Speed
+        <input id="speed" type="range" min="0" max="100" step="1" />
+        <span id="speedLabel">1×</span>
+      </label>
+      <span id="clock" class="muted">Day 1</span>
+      <span id="rate" class="muted"></span>
+      <label>
+        Colour
+        <select id="colour">
+          <option value="tag">Tag</option>
+          <option value="species">Species</option>
+          <option value="feeding">Feeding mode</option>
+          <option value="energy">Energy</option>
+        </select>
+      </label>
+      <span class="spacer"></span>
+      <label>Seed <input id="seed" size="8" /></label>
+      <button id="restart">Restart</button>
+      <button id="settingsBtn">Settings</button>
+      <button id="sideBtn">Charts</button>
+    </header>
+
+    <aside id="side">
+      <section>
+        <h2>Population by species</h2>
+        <canvas id="popChart" height="140"></canvas>
+      </section>
+      <section>
+        <h2>Feeding modes</h2>
+        <canvas id="feedChart" height="110"></canvas>
+        <div class="legend">
+          <span><i style="background: var(--light)"></i>Light</span>
+          <span><i style="background: var(--vent)"></i>Vent</span>
+          <span><i style="background: var(--engulf)"></i>Engulfing</span>
+          <span><i style="background: var(--debris)"></i>Debris</span>
+        </div>
+      </section>
+      <section>
+        <h2>Species <span id="speciesCount" class="muted"></span></h2>
+        <p id="totals" class="muted small"></p>
+        <div id="speciesTree"></div>
+      </section>
+    </aside>
+
+    <aside id="inspector" hidden>
+      <header>
+        <h2 id="inspTitle">Cell</h2>
+        <button id="inspClose" title="Stop following (Esc)">×</button>
+      </header>
+      <div id="inspBody"></div>
+    </aside>
+
+    <dialog id="settings">
+      <form method="dialog">
+        <h2>Settings</h2>
+        <p class="muted small">Changes apply when the world restarts.</p>
+        <div id="settingsFields"></div>
+        <menu>
+          <button value="cancel">Cancel</button>
+          <button value="reset" id="settingsReset">Defaults</button>
+          <button value="apply" id="settingsApply">Apply and restart</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <p id="hint" class="muted small">Drag to rotate · scroll to zoom · right-drag to pan · click a cell to follow it</p>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
