@@ -140,8 +140,7 @@ section + section {
   padding-top: 6px;
 }
 
-canvas#popChart,
-canvas#feedChart {
+#side canvas {
   width: 100%;
   display: block;
 }
@@ -166,12 +165,17 @@ canvas#feedChart {
 }
 
 #tune summary {
+  display: flex;
+  align-items: center;
   cursor: pointer;
   list-style: none;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 6px 0;
 }
 
-#tune summary h2 {
-  display: inline;
+#tune summary::-webkit-details-marker {
+  display: none;
 }
 
 #tune summary::before {

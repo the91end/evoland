@@ -9,9 +9,11 @@ const TOP_SPECIES = 8;
 
 function setup(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   const dpr = Math.min(window.devicePixelRatio, 2);
+  // Pin the CSS size so a high-DPI backing store never grows the element.
+  const h = Number(canvas.dataset.h ?? (canvas.dataset.h = canvas.getAttribute('height') ?? '120'));
+  canvas.style.height = `${h}px`;
   const w = canvas.clientWidth;
-  const h = canvas.clientHeight || Number(canvas.getAttribute('height'));
-  if (canvas.width !== Math.round(w * dpr)) {
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
   }
