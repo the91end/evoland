@@ -7,6 +7,7 @@
  *   PARAMS='{"kLight":0.05}' npm run headless -- 1 20000
  */
 import { World } from '../src/sim/world';
+import { GENE_COUNT, Gene } from '../src/sim/genome';
 
 const seed = process.argv[2] ?? '1';
 const ticks = Number(process.argv[3] ?? 30000);
@@ -60,5 +61,17 @@ function meanShares(): string {
     e += w.shareE[i];
   }
   const n = w.n || 1;
-  return [l, v, e].map((x) => (x / n).toFixed(2)).join('/');
+  let tol = 0;
+  const mean = [0, 0, 0];
+  for (let i = 0; i < w.n; i++) {
+    tol += w.tol[i];
+    for (let k = 0; k < 3; k++) mean[k] += w.genes[i * GENE_COUNT + Gene.TagR + k] / n;
+  }
+  let spread = 0;
+  for (let i = 0; i < w.n; i++)
+    for (let k = 0; k < 3; k++) spread += (w.genes[i * GENE_COUNT + Gene.TagR + k] - mean[k]) ** 2 / n;
+  return (
+    [l, v, e].map((x) => (x / n).toFixed(2)).join('/') +
+    `  tol ${(tol / n).toFixed(3)}  tag sd ${Math.sqrt(spread).toFixed(3)}`
+  );
 }

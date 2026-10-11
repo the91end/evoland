@@ -52,6 +52,14 @@
         </div>
       </section>
       <section>
+        <details id="tune">
+          <summary><h2>Tune</h2></summary>
+          <p class="muted small">Changes apply right away to the running pond.</p>
+          <div id="tuneFields"></div>
+          <button id="tuneReset" type="button">Reset to defaults</button>
+        </details>
+      </section>
+      <section>
         <h2>Species <span id="speciesCount" class="muted"></span></h2>
         <p id="totals" class="muted small"></p>
         <div id="speciesTree"></div>
@@ -68,8 +76,8 @@
 
     <dialog id="settings">
       <form method="dialog">
-        <h2>Settings</h2>
-        <p class="muted small">Changes apply when the world restarts.</p>
+        <h2>Pond settings</h2>
+        <p class="muted small">These shape the pond itself, so they apply when it restarts. Everything else is under Tune in the side panel and changes live.</p>
         <div id="settingsFields"></div>
         <menu>
           <button value="cancel">Cancel</button>

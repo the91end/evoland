@@ -217,6 +217,7 @@ export class World {
       g[Gene.TagR] = clamp01(tag[0] + rng.gauss() * 0.01);
       g[Gene.TagG] = clamp01(tag[1] + rng.gauss() * 0.01);
       g[Gene.TagB] = clamp01(tag[2] + rng.gauss() * 0.01);
+      g[Gene.Tolerance] = clamp01(2 * p.startTolerance + rng.gauss() * 0.05);
       g[Gene.LikeR] = g[Gene.TagR];
       g[Gene.LikeG] = g[Gene.TagG];
       g[Gene.LikeB] = g[Gene.TagB];

@@ -165,6 +165,47 @@ canvas#feedChart {
   vertical-align: -1px;
 }
 
+#tune summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+#tune summary h2 {
+  display: inline;
+}
+
+#tune summary::before {
+  content: '▸ ';
+  color: var(--muted);
+}
+
+#tune[open] summary::before {
+  content: '▾ ';
+}
+
+label.tune {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 8px;
+  margin: 6px 0;
+  font-size: 12px;
+}
+
+label.tune input {
+  grid-column: 1 / -1;
+  width: 100%;
+  padding: 0;
+}
+
+label.tune .value {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+label.tune.changed .value {
+  color: var(--accent);
+}
+
 #speciesTree .row {
   display: flex;
   align-items: center;

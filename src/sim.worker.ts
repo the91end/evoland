@@ -58,6 +58,9 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     case 'speed':
       speed = m.speed;
       break;
+    case 'params':
+      if (world) Object.assign(world.p, m.params);
+      break;
     case 'pause':
       paused = m.paused;
       lastTime = performance.now();

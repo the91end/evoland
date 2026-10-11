@@ -75,6 +75,7 @@ function start(): void {
   url.searchParams.set('seed', seed);
   history.replaceState(null, '', url);
   $<HTMLInputElement>('seed').value = seed;
+  buildTune();
   send({ type: 'start', seed, params: overrides });
   send({ type: 'speed', speed: currentSpeed() });
   send({ type: 'pause', paused });
@@ -279,27 +280,38 @@ function showInspector(d: CellDetail): void {
 }
 
 // ---------------------------------------------------------------------------
-// Settings
+// Settings: live tuning sliders, plus settings that need a restart
 // ---------------------------------------------------------------------------
 
-const SETTINGS: [keyof Params, string][] = [
+/** Parameters that can change while the pond runs: [key, label, min, max]. */
+const LIVE: [keyof Params, string, number, number][] = [
+  ['dayLength', 'Day length (ticks)', 300, 12000],
+  ['kLight', 'Light gain', 0, 0.4],
+  ['lightPerColumn', 'Light per water column', 0.05, 2],
+  ['lightHalfDepth', 'Light halves every (units)', 15, 300],
+  ['kVent', 'Vent gain', 0, 1.5],
+  ['ventRegen', 'Vent refill per tick', 0, 30],
+  ['ventCount', 'Vents', 0, 15],
+  ['kBasal', 'Basal cost', 0, 0.02],
+  ['kSwim', 'Swimming cost', 0, 0.03],
+  ['engulfGain', 'Engulf energy gain', 0, 1],
+  ['debrisFraction', 'Energy left as debris', 0, 1],
+  ['divisionLoss', 'Energy lost dividing', 0, 0.5],
+  ['lifespan', 'Lifespan (ticks)', 300, 12000],
+  ['mutationStep', 'Mutation step', 0, 0.2],
+  ['maxSpeed', 'Top swimming speed', 0, 6],
+];
+
+/** Parameters that shape the pond itself, applied on restart. */
+const RESTART: [keyof Params, string][] = [
   ['startingCells', 'Starting cells'],
+  ['startTolerance', 'Starting tolerance (tag distance)'],
   ['cellCap', 'Cell cap'],
   ['ticksPerSecond', 'Ticks per second at 1×'],
-  ['dayLength', 'Day length (ticks)'],
-  ['ventCount', 'Vents'],
   ['ventLifetime', 'Vent lifetime (ticks)'],
-  ['lightHalfDepth', 'Light halves every (units)'],
-  ['kLight', 'Light gain'],
-  ['kVent', 'Vent gain'],
-  ['ventRegen', 'Vent refill per tick'],
-  ['kBasal', 'Basal cost'],
-  ['kSwim', 'Swimming cost'],
-  ['lightPerColumn', 'Light per water column'],
-  ['engulfGain', 'Engulf energy gain'],
-  ['lifespan', 'Lifespan (ticks)'],
-  ['mutationStep', 'Mutation step'],
+  ['energyPerVolume', 'Energy stored per volume'],
 ];
+const INT_KEYS = new Set<keyof Params>(['dayLength', 'ventCount', 'lifespan', 'startingCells', 'cellCap']);
 
 function loadOverrides(): Partial<Params> {
   try {
@@ -309,10 +321,72 @@ function loadOverrides(): Partial<Params> {
   }
 }
 
+function saveOverrides(): void {
+  try {
+    localStorage.setItem('evoland.params', JSON.stringify(overrides));
+  } catch {
+    // Storage may be unavailable; settings still apply to this run.
+  }
+}
+
+function setOverride(key: keyof Params, v: number): void {
+  const o = overrides as Record<string, number>;
+  if (v === DEFAULT_PARAMS[key]) delete o[key];
+  else o[key] = v;
+}
+
+const fmt = (v: number) => (Number.isInteger(v) ? String(v) : String(Number(v.toPrecision(3))));
+
+/** Builds the live sliders in the side panel; changes reach the worker at once. */
+function buildTune(): void {
+  const box = $('tuneFields');
+  box.innerHTML = '';
+  for (const [key, label, min, max] of LIVE) {
+    const row = document.createElement('label');
+    row.className = 'tune';
+    const name = document.createElement('span');
+    name.textContent = label;
+    const value = document.createElement('span');
+    value.className = 'value';
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = String(min);
+    input.max = String(max);
+    input.step = INT_KEYS.has(key) ? '1' : String((max - min) / 200);
+    input.value = String(params[key]);
+    input.dataset.key = key;
+    value.textContent = fmt(params[key]);
+    if (params[key] !== DEFAULT_PARAMS[key]) row.classList.add('changed');
+    input.addEventListener('input', () => {
+      const v = INT_KEYS.has(key) ? Math.round(Number(input.value)) : Number(input.value);
+      value.textContent = fmt(v);
+      (params as unknown as Record<string, number>)[key] = v;
+      setOverride(key, v);
+      row.classList.toggle('changed', v !== DEFAULT_PARAMS[key]);
+      send({ type: 'params', params: { [key]: v } });
+    });
+    input.addEventListener('change', saveOverrides);
+    row.append(name, value, input);
+    box.append(row);
+  }
+}
+
+$('tuneReset').addEventListener('click', () => {
+  const live: Partial<Params> = {};
+  for (const [key] of LIVE) {
+    setOverride(key, DEFAULT_PARAMS[key]);
+    (live as Record<string, number>)[key] = DEFAULT_PARAMS[key];
+  }
+  params = { ...params, ...live };
+  saveOverrides();
+  send({ type: 'params', params: live });
+  buildTune();
+});
+
 function openSettings(): void {
   const box = $('settingsFields');
   box.innerHTML = '';
-  for (const [key, label] of SETTINGS) {
+  for (const [key, label] of RESTART) {
     const l = document.createElement('label');
     l.textContent = label;
     l.htmlFor = `set-${key}`;
@@ -330,20 +404,14 @@ $('settingsBtn').addEventListener('click', openSettings);
 $<HTMLDialogElement>('settings').addEventListener('close', () => {
   const choice = $<HTMLDialogElement>('settings').returnValue;
   if (choice === 'apply') {
-    const next: Partial<Params> = {};
-    for (const [key] of SETTINGS) {
+    for (const [key] of RESTART) {
       const v = Number($<HTMLInputElement>(`set-${key}`).value);
-      if (Number.isFinite(v) && v !== DEFAULT_PARAMS[key]) (next as Record<string, number>)[key] = v;
+      if (Number.isFinite(v) && v > 0) setOverride(key, v);
     }
-    overrides = next;
   } else if (choice === 'reset') {
     overrides = {};
   } else return;
-  try {
-    localStorage.setItem('evoland.params', JSON.stringify(overrides));
-  } catch {
-    // Storage may be unavailable; settings still apply to this run.
-  }
+  saveOverrides();
   start();
 });
 

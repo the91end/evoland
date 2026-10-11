@@ -11,6 +11,11 @@ export interface Params {
   /** Full day+night cycle length in ticks (half day, half night). */
   dayLength: number;
   startingCells: number;
+  /**
+   * Tag distance the starting cells still treat as kin. Starting picky
+   * means drifting tags turn relatives into strangers (and prey) sooner.
+   */
+  startTolerance: number;
   cellCap: number;
   ventCount: number;
   /** Mean vent lifetime in ticks. */
@@ -65,6 +70,7 @@ export const DEFAULT_PARAMS: Params = {
   ticksPerSecond: 30,
   dayLength: 3000,
   startingCells: 300,
+  startTolerance: 0.1,
   cellCap: 5000,
   ventCount: 5,
   ventLifetime: 20000,

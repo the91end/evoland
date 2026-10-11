@@ -6,6 +6,8 @@ import type { StatsSample, LineageRecord } from './sim/world';
 export type ToWorker =
   | { type: 'start'; seed: string; params: Partial<Params> }
   | { type: 'speed'; speed: number }
+  /** Live parameter changes, applied to the running world. */
+  | { type: 'params'; params: Partial<Params> }
   | { type: 'pause'; paused: boolean }
   | { type: 'inspect'; id: number | null };
 
