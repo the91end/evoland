@@ -2,8 +2,8 @@ import type { Rng } from './rng';
 
 /**
  * Gene layout. Every gene is a number in [0, 1]; traits map them onto
- * real ranges. Phase 1 genes only: adhesion, sharing, policing, the switch
- * network and the rest are appended in later phases.
+ * real ranges. Phases 1 and 2; the switch network and sex are appended in
+ * Phase 3.
  */
 export const Gene = {
   Size: 0,
@@ -21,9 +21,13 @@ export const Gene = {
   Swap: 12,
   DivThreshold: 13,
   MutationRate: 14,
+  Adhesion: 15,
+  Sharing: 16,
+  Policing: 17,
+  Symbiont: 18,
 } as const;
 
-export const GENE_COUNT = 15;
+export const GENE_COUNT = 19;
 
 export const GENE_NAMES: string[] = [
   'Size',
@@ -41,6 +45,10 @@ export const GENE_NAMES: string[] = [
   'Gene swapping',
   'Division threshold',
   'Mutation rate',
+  'Adhesion',
+  'Sharing',
+  'Policing',
+  'Symbiont keeping',
 ];
 
 /** Traits derived once from a genome when a cell is born. */
@@ -55,6 +63,10 @@ export interface Traits {
   swap: number;
   divThreshold: number;
   mutationRate: number;
+  adhesion: number;
+  sharing: number;
+  policing: number;
+  symbiont: number;
 }
 
 export function radiusOf(g: ArrayLike<number>, o: number): number {
@@ -76,6 +88,10 @@ export function traitsOf(g: ArrayLike<number>, o = 0): Traits {
     swap: g[o + Gene.Swap],
     divThreshold: 0.5 + 0.45 * g[o + Gene.DivThreshold],
     mutationRate: 0.01 + 0.29 * g[o + Gene.MutationRate],
+    adhesion: g[o + Gene.Adhesion],
+    sharing: g[o + Gene.Sharing],
+    policing: g[o + Gene.Policing],
+    symbiont: g[o + Gene.Symbiont],
   };
 }
 

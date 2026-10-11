@@ -27,6 +27,20 @@ const DEBRIS_MAX_AGE = 2000;
 const STATS_EVERY = 50;
 const STATS_MAX = 1200;
 const LINEAGE_DEPTH = 12;
+/** A bond snaps when stretched past this many times its rest length. */
+const BOND_SNAP = 4;
+/** Policing cells review their bonds this often. */
+const POLICE_EVERY = 50;
+/** Of a by-product, the share that goes straight to bonded partners. */
+const BOND_BYPRODUCT = 0.7;
+/** By-products left in the water fade this much per tick. */
+const BYPRODUCT_DECAY = 0.85;
+/** Share of the local by-product pool a cell can take per tick. */
+const BYPRODUCT_ABSORB = 0.1;
+/** Share of an engulfed cell's energy left over as debris. */
+const ENGULF_DEBRIS = 0.1;
+/** A cell counts as a cheater when it got back this many times what it gave. */
+const CHEAT_RATIO = 2;
 
 export interface Vent {
   x: number;
@@ -58,6 +72,16 @@ export interface StatsSample {
   sun: number;
   /** Species id -> living cells. */
   species: Record<number, number>;
+  /** Cells with at least one bond. */
+  bonded: number;
+  /** Colonies of 2+ cells, the biggest one, and those mixing 2+ species. */
+  colonies: number;
+  biggestColony: number;
+  mixedColonies: number;
+  /** Cells taking far more shared energy than they give. */
+  cheaters: number;
+  /** Guests living inside hosts. */
+  guests: number;
 }
 
 export class World {
@@ -100,6 +124,32 @@ export class World {
   readonly swap: Float32Array;
   readonly divThr: Float32Array;
   readonly mutRate: Float32Array;
+  readonly adhesion: Float32Array;
+  readonly sharing: Float32Array;
+  readonly policing: Float32Array;
+  readonly symbiont: Float32Array;
+
+  // ---- bonds: up to maxBonds slots per cell, by cell index ----
+  readonly mb: number;
+  readonly bondCount: Uint8Array;
+  readonly bondTo: Int32Array;
+  /** Per bond slot: energy this cell gave / got back, decayed over the policing window. */
+  readonly bondGave: Float32Array;
+  readonly bondGot: Float32Array;
+  /** Per cell: total shared energy given / received, same decay. */
+  readonly gaveTotal: Float32Array;
+  readonly gotTotal: Float32Array;
+  /** Colony id (index of its first cell) and colony size, refreshed every tick. */
+  readonly colony: Int32Array;
+  readonly colonySize: Int32Array;
+  private readonly colonyVolume: Float32Array;
+
+  // ---- guests living inside hosts: up to maxGuests slots per cell ----
+  readonly mg: number;
+  readonly guestCount: Uint8Array;
+  readonly guestGenes: Float32Array;
+  readonly guestEnergy: Float32Array;
+  readonly guestId: Uint32Array;
 
   // ---- debris ----
   readonly dCap: number;
@@ -124,6 +174,9 @@ export class World {
   private readonly sorted: Int32Array;
   /** Light demand per water column (x, z bucket), for sharing light. */
   private readonly colDemand: Float32Array;
+  /** By-products in the water per bucket: sugar from light feeders, fertiliser from vent feeders. */
+  readonly sugar: Float32Array;
+  readonly fert: Float32Array;
 
   private readonly order: Int32Array;
   private near = new Int32Array(256);
@@ -136,6 +189,8 @@ export class World {
   totalBorn = 0;
   engulfed = 0;
   swaps = 0;
+  captured = 0;
+  policed = 0;
 
   constructor(seed: string | number = 1, params: Partial<Params> = {}) {
     this.p = { ...DEFAULT_PARAMS, ...params };
@@ -172,6 +227,27 @@ export class World {
     this.swap = new Float32Array(cap);
     this.divThr = new Float32Array(cap);
     this.mutRate = new Float32Array(cap);
+    this.adhesion = new Float32Array(cap);
+    this.sharing = new Float32Array(cap);
+    this.policing = new Float32Array(cap);
+    this.symbiont = new Float32Array(cap);
+
+    const mb = (this.mb = p.maxBonds);
+    this.bondCount = new Uint8Array(cap);
+    this.bondTo = new Int32Array(cap * mb);
+    this.bondGave = new Float32Array(cap * mb);
+    this.bondGot = new Float32Array(cap * mb);
+    this.gaveTotal = new Float32Array(cap);
+    this.gotTotal = new Float32Array(cap);
+    this.colony = new Int32Array(cap);
+    this.colonySize = new Int32Array(cap);
+    this.colonyVolume = new Float32Array(cap);
+
+    const mg = (this.mg = p.maxGuests);
+    this.guestCount = new Uint8Array(cap);
+    this.guestGenes = new Float32Array(cap * mg * GENE_COUNT);
+    this.guestEnergy = new Float32Array(cap * mg);
+    this.guestId = new Uint32Array(cap * mg);
 
     const dCap = (this.dCap = Math.max(1000, Math.floor(cap * 0.8)));
     this.dx = new Float32Array(dCap);
@@ -190,6 +266,8 @@ export class World {
     this.cursor = new Int32Array(nb);
     this.sorted = new Int32Array(cap);
     this.colDemand = new Float32Array(this.gx * this.gz);
+    this.sugar = new Float32Array(nb);
+    this.fert = new Float32Array(nb);
     this.order = new Int32Array(cap);
 
     this.speciesTracker = new Species(p.speciesDistance);
@@ -218,6 +296,8 @@ export class World {
       g[Gene.TagG] = clamp01(tag[1] + rng.gauss() * 0.01);
       g[Gene.TagB] = clamp01(tag[2] + rng.gauss() * 0.01);
       g[Gene.Tolerance] = clamp01(2 * p.startTolerance + rng.gauss() * 0.05);
+      // Policing starts near zero and has to evolve.
+      g[Gene.Policing] = clamp01(0.05 + rng.gauss() * 0.02);
       g[Gene.LikeR] = g[Gene.TagR];
       g[Gene.LikeG] = g[Gene.TagG];
       g[Gene.LikeB] = g[Gene.TagB];
@@ -274,6 +354,11 @@ export class World {
     this.engulfCd[i] = 0;
     this.force[i] = 0;
     this.dead[i] = 0;
+    this.bondCount[i] = 0;
+    this.guestCount[i] = 0;
+    this.gaveTotal[i] = this.gotTotal[i] = 0;
+    this.colony[i] = i;
+    this.colonySize[i] = 1;
     this.refreshTraits(i);
     this.energy[i] = 0;
     this.totalBorn++;
@@ -294,6 +379,10 @@ export class World {
     this.swap[i] = t.swap;
     this.divThr[i] = t.divThreshold;
     this.mutRate[i] = t.mutationRate;
+    this.adhesion[i] = t.adhesion;
+    this.sharing[i] = t.sharing;
+    this.policing[i] = t.policing;
+    this.symbiont[i] = t.symbiont;
     if (this.energy[i] > this.maxE[i]) this.energy[i] = this.maxE[i];
   }
 
@@ -442,6 +531,11 @@ export class World {
     this.updateSun();
     this.updateVents();
     this.buildHash();
+    this.findColonies();
+    for (let b = 0; b < this.sugar.length; b++) {
+      this.sugar[b] *= BYPRODUCT_DECAY;
+      this.fert[b] *= BYPRODUCT_DECAY;
+    }
 
     const n0 = this.n;
     const order = this.order;
@@ -459,6 +553,7 @@ export class World {
       this.updateCell(i);
     }
 
+    this.updateBonds();
     this.updateDebris();
     this.removeDead();
 
@@ -507,7 +602,7 @@ export class World {
       const friend = tagDistance(genes, j * G, genes, i * G) <= this.tol[i];
 
       if (!friend) {
-        if (canEngulf && ri > rj * ENGULF_SIZE_RATIO && d2 < preyD2) {
+        if (canEngulf && ri > this.wholeRadius(j) * ENGULF_SIZE_RATIO && d2 < preyD2) {
           preyD2 = d2;
           preyDx = dx;
           preyDy = dy;
@@ -534,18 +629,31 @@ export class World {
       this.z[j] += dz * push * 0.5;
 
       if (!friend) {
-        if (canEngulf && this.engulfCd[i] === 0 && ri > rj * ENGULF_SIZE_RATIO && rng.chance(this.shareE[i])) {
+        if (
+          canEngulf &&
+          this.engulfCd[i] === 0 &&
+          ri > this.wholeRadius(j) * ENGULF_SIZE_RATIO &&
+          rng.chance(this.shareE[i])
+        ) {
           this.engulfCd[i] = ENGULF_COOLDOWN;
-          if (rng.chance(ri / (ri + rj))) {
-            this.energy[i] = Math.min(this.maxE[i], this.energy[i] + p.engulfGain * this.energy[j]);
-            this.kill(j, false);
-            this.engulfed++;
-          }
+          if (rng.chance(ri / (ri + rj))) this.engulf(i, j);
         }
-      } else if (rng.chance(this.swap[i] * FRIEND_SWAP_RATE)) {
-        swapGenes(genes, i * G, genes, j * G, rng);
-        this.refreshTraits(i);
-        this.swaps++;
+      } else {
+        if (rng.chance(this.swap[i] * FRIEND_SWAP_RATE)) {
+          swapGenes(genes, i * G, genes, j * G, rng);
+          this.refreshTraits(i);
+          this.swaps++;
+        }
+        // Friends may bond; the other cell's view doesn't matter, which is
+        // the opening a tag-mimicking cheater uses.
+        if (
+          this.bondCount[i] < this.mb &&
+          this.bondCount[j] < this.mb &&
+          rng.chance(this.adhesion[i] * this.adhesion[j] * p.bondRate) &&
+          this.bondSlot(i, j) < 0
+        ) {
+          this.addBond(i, j);
+        }
       }
     }
     if (this.dead[i]) return;
@@ -604,13 +712,15 @@ export class World {
 
     // ---- feed ----
     const r2 = r2i;
-    let gain = 0;
-    if (effL > 0) gain += this.lightGain(i);
-    if (effV > 0) gain += this.feedOnVents(i, effV * p.kVent * r2);
+    const lightFood = effL > 0 ? this.lightGain(i) : 0;
+    const ventFood = effV > 0 ? this.feedOnVents(i, effV * p.kVent * r2) : 0;
+    let gain = lightFood + ventFood + this.absorbByproducts(i);
+    this.releaseByproducts(i, lightFood, ventFood);
+    if (this.guestCount[i] > 0) gain += this.updateGuests(i);
     this.energy[i] = Math.min(this.maxE[i], this.energy[i] + gain);
 
     // ---- pay ----
-    this.energy[i] -= p.kBasal * r2 + p.kSwim * f * f * r2;
+    this.energy[i] -= p.kBasal * r2 + p.kSwim * f * f * r2 + p.kBond * this.bondCount[i];
     this.age[i]++;
     if (this.cooldown[i] > 0) this.cooldown[i]--;
     if (this.engulfCd[i] > 0) this.engulfCd[i]--;
@@ -661,6 +771,9 @@ export class World {
     this.energy[i] = e;
     this.energy[c] = Math.min(e, this.maxE[c]);
     this.cooldown[i] = p.divisionCooldown;
+    // Staying stuck together after dividing is the first step to a colony.
+    if (rng.chance(this.adhesion[i]) && this.bondCount[i] < this.mb) this.addBond(i, c);
+    if (this.guestCount[i] > 0) this.splitGuests(i, c);
   }
 
   /** Marks a cell dead; it leaves debris unless it was eaten. */
@@ -669,13 +782,20 @@ export class World {
     this.dead[i] = 1;
     const rec = this.lineage.get(this.id[i]);
     if (rec) rec.died = this.tick;
-    if (!leaveDebris || this.nd >= this.dCap) return;
+    while (this.bondCount[i] > 0) this.removeBondAt(i, 0);
+    this.releaseGuests(i);
+    if (!leaveDebris) return;
+    this.dropDebris(i, this.p.debrisFraction * (Math.max(0, this.energy[i]) + 0.2 * this.maxE[i]));
+  }
+
+  private dropDebris(i: number, energy: number): void {
+    if (this.nd >= this.dCap || energy <= 0) return;
     const d = this.nd++;
     this.dx[d] = this.x[i];
     this.dy[d] = this.y[i];
     this.dz[d] = this.z[i];
     // A body is worth something even when its store is empty.
-    this.dE[d] = this.p.debrisFraction * (Math.max(0, this.energy[i]) + 0.2 * this.maxE[i]);
+    this.dE[d] = energy;
     this.dAge[d] = 0;
     this.dGenes.set(this.genes.subarray(i * GENE_COUNT, (i + 1) * GENE_COUNT), d * GENE_COUNT);
   }
@@ -762,10 +882,350 @@ export class World {
       this.id, this.parent, this.gen, this.species, this.x, this.y, this.z, this.vx, this.vy, this.vz,
       this.energy, this.age, this.lifespan, this.cooldown, this.engulfCd, this.force, this.dead,
       this.radius, this.maxE, this.shareL, this.shareV, this.shareE, this.mot, this.tol, this.swap,
-      this.divThr, this.mutRate,
+      this.divThr, this.mutRate, this.adhesion, this.sharing, this.policing, this.symbiont,
+      this.bondCount, this.gaveTotal, this.gotTotal, this.colony, this.colonySize, this.guestCount,
     ];
     for (const a of arrays) a[to] = a[from];
     this.genes.copyWithin(to * GENE_COUNT, from * GENE_COUNT, (from + 1) * GENE_COUNT);
+    const mb = this.mb;
+    this.bondTo.copyWithin(to * mb, from * mb, (from + 1) * mb);
+    this.bondGave.copyWithin(to * mb, from * mb, (from + 1) * mb);
+    this.bondGot.copyWithin(to * mb, from * mb, (from + 1) * mb);
+    // Partners now find this cell at its new index.
+    for (let s = 0; s < this.bondCount[to]; s++) {
+      const j = this.bondTo[to * mb + s];
+      for (let t = 0; t < this.bondCount[j]; t++) if (this.bondTo[j * mb + t] === from) this.bondTo[j * mb + t] = to;
+    }
+    const mg = this.mg;
+    const GG = mg * GENE_COUNT;
+    this.guestGenes.copyWithin(to * GG, from * GG, (from + 1) * GG);
+    this.guestEnergy.copyWithin(to * mg, from * mg, (from + 1) * mg);
+    this.guestId.copyWithin(to * mg, from * mg, (from + 1) * mg);
+  }
+
+  // =====================================================================
+  // Bonds and colonies
+  // =====================================================================
+
+  /** Slot in i's bond list that points at j, or -1. */
+  bondSlot(i: number, j: number): number {
+    for (let s = 0; s < this.bondCount[i]; s++) if (this.bondTo[i * this.mb + s] === j) return s;
+    return -1;
+  }
+
+  private addBond(i: number, j: number): void {
+    if (i === j || this.bondCount[i] >= this.mb || this.bondCount[j] >= this.mb) return;
+    for (const [a, b] of [
+      [i, j],
+      [j, i],
+    ]) {
+      const s = a * this.mb + this.bondCount[a]++;
+      this.bondTo[s] = b;
+      this.bondGave[s] = 0;
+      this.bondGot[s] = 0;
+    }
+  }
+
+  /** Removes bond slot s of cell i, and the matching slot on its partner. */
+  private removeBondAt(i: number, s: number): void {
+    const mb = this.mb;
+    const j = this.bondTo[i * mb + s];
+    this.dropSlot(i, s);
+    const t = this.bondSlot(j, i);
+    if (t >= 0) this.dropSlot(j, t);
+  }
+
+  private dropSlot(i: number, s: number): void {
+    const mb = this.mb;
+    const last = --this.bondCount[i];
+    if (s !== last) {
+      this.bondTo[i * mb + s] = this.bondTo[i * mb + last];
+      this.bondGave[i * mb + s] = this.bondGave[i * mb + last];
+      this.bondGot[i * mb + s] = this.bondGot[i * mb + last];
+    }
+  }
+
+  /** Labels connected groups of bonded cells. */
+  findColonies(): void {
+    const n = this.n;
+    const mb = this.mb;
+    const colony = this.colony;
+    colony.fill(-1, 0, n);
+    const stack = this.order; // free until the shuffle below
+    for (let i = 0; i < n; i++) {
+      if (colony[i] >= 0) continue;
+      colony[i] = i;
+      let top = 0;
+      let size = 0;
+      let vol = 0;
+      stack[top++] = i;
+      while (top > 0) {
+        const a = stack[--top];
+        size++;
+        vol += this.radius[a] ** 3;
+        for (let s = 0; s < this.bondCount[a]; s++) {
+          const b = this.bondTo[a * mb + s];
+          if (colony[b] < 0) {
+            colony[b] = i;
+            stack[top++] = b;
+          }
+        }
+      }
+      this.colonySize[i] = size;
+      this.colonyVolume[i] = vol;
+    }
+    for (let i = 0; i < n; i++) this.colonySize[i] = this.colonySize[colony[i]];
+  }
+
+  /** Radius of the whole colony a cell belongs to, as one ball of the same volume. */
+  private wholeRadius(j: number): number {
+    if (this.bondCount[j] === 0) return this.radius[j];
+    return Math.cbrt(this.colonyVolume[this.colony[j]]);
+  }
+
+  /**
+   * After cells move: bonds act as springs and pull partners' velocities
+   * together, partners share energy, ledgers decay, and policing cells
+   * cut partners that take more than they give.
+   */
+  private updateBonds(): void {
+    const { p, rng } = this;
+    const mb = this.mb;
+    const half = p.width / 2;
+    const decay = 1 - 1 / p.policingWindow;
+    for (let i = 0; i < this.n; i++) {
+      if (this.dead[i]) continue;
+      this.gaveTotal[i] *= decay;
+      this.gotTotal[i] *= decay;
+      const police = (this.tick + i) % POLICE_EVERY === 0 && this.policing[i] > 0;
+      for (let s = this.bondCount[i] - 1; s >= 0; s--) {
+        const k = i * mb + s;
+        this.bondGave[k] *= decay;
+        this.bondGot[k] *= decay;
+        const j = this.bondTo[k];
+        if (police && this.bondGave[k] > 1 && this.bondGot[k] * 2 < this.bondGave[k] && rng.chance(this.policing[i])) {
+          this.removeBondAt(i, s);
+          this.policed++;
+          continue;
+        }
+        if (j < i) continue; // each pair once below
+        let dx = this.x[j] - this.x[i];
+        if (dx > half) dx -= p.width;
+        else if (dx < -half) dx += p.width;
+        const dy = this.y[j] - this.y[i];
+        let dz = this.z[j] - this.z[i];
+        if (dz > half) dz -= p.width;
+        else if (dz < -half) dz += p.width;
+        const d = Math.hypot(dx, dy, dz) || 0.01;
+        const rest = this.radius[i] + this.radius[j];
+        if (d > rest * BOND_SNAP) {
+          this.removeBondAt(i, s);
+          continue;
+        }
+        // Spring toward touching distance.
+        const c = (0.25 * (d - rest)) / d;
+        this.x[i] = wrap(this.x[i] + dx * c, p.width);
+        this.y[i] = clamp(this.y[i] + dy * c, this.radius[i], p.depth - this.radius[i]);
+        this.z[i] = wrap(this.z[i] + dz * c, p.width);
+        this.x[j] = wrap(this.x[j] - dx * c, p.width);
+        this.y[j] = clamp(this.y[j] - dy * c, this.radius[j], p.depth - this.radius[j]);
+        this.z[j] = wrap(this.z[j] - dz * c, p.width);
+        // A colony swims as one: partners pull each other's velocity together.
+        const mvx = 0.5 * (this.vx[i] + this.vx[j]);
+        const mvy = 0.5 * (this.vy[i] + this.vy[j]);
+        const mvz = 0.5 * (this.vz[i] + this.vz[j]);
+        this.vx[i] = this.vx[j] = mvx;
+        this.vy[i] = this.vy[j] = mvy;
+        this.vz[i] = this.vz[j] = mvz;
+        // Share: the fuller cell passes some of its spare energy along.
+        const fi = this.energy[i] / this.maxE[i];
+        const fj = this.energy[j] / this.maxE[j];
+        const [from, to, slotFrom] = fi > fj ? [i, j, k] : [j, i, -1];
+        const spare = Math.max(0, this.energy[from] - 0.3 * this.maxE[from]);
+        const amount = Math.min(
+          (this.sharing[from] * p.shareRate * spare) / this.bondCount[from],
+          Math.max(0, this.maxE[to] - this.energy[to]),
+        );
+        if (amount > 0) {
+          this.energy[from] -= amount;
+          this.energy[to] += amount;
+          this.gaveTotal[from] += amount;
+          this.gotTotal[to] += amount;
+          const sf = slotFrom >= 0 ? slotFrom : j * mb + this.bondSlot(j, i);
+          const st = slotFrom >= 0 ? j * mb + this.bondSlot(j, i) : k;
+          this.bondGave[sf] += amount;
+          this.bondGot[st] += amount;
+        }
+      }
+    }
+  }
+
+  // =====================================================================
+  // By-products
+  // =====================================================================
+
+  /**
+   * Light feeders leak sugar (food for vent feeders and engulfers); vent
+   * feeders leave spent minerals that fertilise light feeders. Most goes
+   * straight to bonded partners who can use it; the rest drifts into the
+   * water nearby and fades fast.
+   */
+  private releaseByproducts(i: number, lightFood: number, ventFood: number): void {
+    const p = this.p;
+    if (lightFood <= 0 && ventFood <= 0) return;
+    const sugar = p.byproduct * lightFood;
+    const fert = p.byproduct * ventFood;
+    let leftS = sugar;
+    let leftF = fert;
+    const nb = this.bondCount[i];
+    if (nb > 0) {
+      for (let s = 0; s < nb; s++) {
+        const j = this.bondTo[i * this.mb + s];
+        const useS = Math.min(1, this.shareV[j] + this.shareE[j]);
+        const useF = this.shareL[j];
+        const gotS = (sugar * BOND_BYPRODUCT * useS) / nb;
+        const gotF = (fert * BOND_BYPRODUCT * useF) / nb;
+        this.energy[j] = Math.min(this.maxE[j], this.energy[j] + gotS + gotF);
+        leftS -= (sugar * BOND_BYPRODUCT) / nb;
+        leftF -= (fert * BOND_BYPRODUCT) / nb;
+      }
+    }
+    const b = this.bucketOf[i];
+    this.sugar[b] += leftS;
+    this.fert[b] += leftF;
+  }
+
+  /** Takes by-products from the water around a cell. */
+  private absorbByproducts(i: number): number {
+    const b = this.bucketOf[i];
+    const useS = Math.min(1, this.shareV[i] + this.shareE[i]);
+    const useF = this.shareL[i];
+    const takeS = this.sugar[b] * BYPRODUCT_ABSORB * useS;
+    const takeF = this.fert[b] * BYPRODUCT_ABSORB * useF;
+    this.sugar[b] -= takeS;
+    this.fert[b] -= takeF;
+    return takeS + takeF;
+  }
+
+  // =====================================================================
+  // Engulfing and guests
+  // =====================================================================
+
+  /** Cell i swallows cell j: digests it, or keeps it alive inside as a guest. */
+  private engulf(i: number, j: number): void {
+    const p = this.p;
+    if (this.guestCount[i] < this.mg && this.rng.chance(this.symbiont[i])) {
+      const g = i * this.mg + this.guestCount[i]++;
+      this.guestGenes.set(this.genes.subarray(j * GENE_COUNT, (j + 1) * GENE_COUNT), g * GENE_COUNT);
+      this.guestEnergy[g] = this.energy[j];
+      this.guestId[g] = this.id[j];
+      this.captured++;
+      this.kill(j, false);
+      return;
+    }
+    this.energy[i] = Math.min(this.maxE[i], this.energy[i] + p.engulfGain * this.energy[j]);
+    this.dropDebris(j, ENGULF_DEBRIS * this.energy[j]);
+    this.kill(j, false);
+    this.engulfed++;
+  }
+
+  /**
+   * Guests feed by their own genes from inside the host, pass part of what
+   * they make to it, and pay their own upkeep. Returns the host's net gain.
+   */
+  private updateGuests(i: number): number {
+    const p = this.p;
+    const G = GENE_COUNT;
+    let toHost = 0;
+    const col = (this.bucketOf[i] / this.gy) | 0;
+    const light = this.lightAt(this.y[i]);
+    const lightCrowd = 1 + this.colDemand[col] / Math.max(1e-6, p.lightPerColumn * this.sun);
+    const vent = this.ventFood(this.x[i], this.y[i], this.z[i]);
+    for (let s = this.guestCount[i] - 1; s >= 0; s--) {
+      const g = i * this.mg + s;
+      const t = traitsOf(this.guestGenes, g * G);
+      const r2 = t.radius * t.radius;
+      const made =
+        (p.kLight * efficiency(t.light) * light * r2) / lightCrowd + p.kVent * efficiency(t.vent) * vent * r2;
+      const pass = p.guestPass * made;
+      toHost += pass - p.kGuest * r2;
+      const maxE = p.energyPerVolume * t.radius ** 3;
+      let e = this.guestEnergy[g] + made - pass - p.kBasal * r2;
+      if (e > maxE) {
+        toHost += e - maxE; // a full guest hands over the rest
+        e = maxE;
+      }
+      if (e <= 0) this.dropGuest(i, s);
+      else this.guestEnergy[g] = e;
+    }
+    return toHost;
+  }
+
+  private dropGuest(i: number, s: number): void {
+    const mg = this.mg;
+    const G = GENE_COUNT;
+    const last = --this.guestCount[i];
+    if (s === last) return;
+    const a = i * mg + s;
+    const b = i * mg + last;
+    this.guestGenes.copyWithin(a * G, b * G, (b + 1) * G);
+    this.guestEnergy[a] = this.guestEnergy[b];
+    this.guestId[a] = this.guestId[b];
+  }
+
+  /**
+   * When a host divides its guests divide too (when they have the energy,
+   * mutating as they go) and are dealt out between the two daughters.
+   */
+  private splitGuests(i: number, c: number): void {
+    const { p, rng } = this;
+    const mg = this.mg;
+    const G = GENE_COUNT;
+    const pool: { genes: Float32Array; e: number; id: number }[] = [];
+    for (let s = 0; s < this.guestCount[i]; s++) {
+      const g = i * mg + s;
+      const genes = this.guestGenes.slice(g * G, (g + 1) * G);
+      const t = traitsOf(genes);
+      const e = this.guestEnergy[g];
+      if (e >= t.divThreshold * p.energyPerVolume * t.radius ** 3 * 0.5) {
+        const child = genes.slice();
+        mutate(child, 0, t.mutationRate, p.mutationStep, rng);
+        const half = (e * (1 - p.divisionLoss)) / 2;
+        pool.push({ genes, e: half, id: this.guestId[g] }, { genes: child, e: half, id: this.nextId++ });
+      } else pool.push({ genes, e, id: this.guestId[g] });
+    }
+    this.guestCount[i] = 0;
+    pool.forEach((guest, k) => {
+      const host = k % 2 === 0 ? i : c;
+      if (this.guestCount[host] >= mg) return;
+      const g = host * mg + this.guestCount[host]++;
+      this.guestGenes.set(guest.genes, g * G);
+      this.guestEnergy[g] = guest.e;
+      this.guestId[g] = guest.id;
+    });
+  }
+
+  /** A dying host lets its guests go free, as long as there is room. */
+  private releaseGuests(i: number): void {
+    const { p, rng } = this;
+    const G = GENE_COUNT;
+    const count = this.guestCount[i];
+    this.guestCount[i] = 0;
+    for (let s = 0; s < count && this.n < this.cap; s++) {
+      const g = i * this.mg + s;
+      rng.unit(this.tmp);
+      const c = this.addCell(
+        this.guestGenes,
+        g * G,
+        wrap(this.x[i] + this.tmp[0] * this.radius[i], p.width),
+        clamp(this.y[i] + this.tmp[1] * this.radius[i], 1, p.depth - 1),
+        wrap(this.z[i] + this.tmp[2] * this.radius[i], p.width),
+        this.id[i],
+        this.gen[i] + 1,
+      );
+      this.energy[c] = Math.min(this.maxE[c], this.guestEnergy[g]);
+      this.species[c] = this.species[i];
+    }
   }
 
   // =====================================================================
@@ -791,7 +1251,22 @@ export class World {
       e = 0,
       rs = 0;
     const sp: Record<number, number> = {};
+    let bonded = 0,
+      cheaters = 0,
+      guests = 0;
+    const colonySpecies = new Map<number, Set<number>>();
+    let biggest = 1;
     for (let i = 0; i < this.n; i++) {
+      if (this.bondCount[i] > 0) {
+        bonded++;
+        const c = this.colony[i];
+        let set = colonySpecies.get(c);
+        if (!set) colonySpecies.set(c, (set = new Set()));
+        set.add(this.species[i]);
+        if (this.colonySize[i] > biggest) biggest = this.colonySize[i];
+      }
+      if (this.gotTotal[i] > 1 && this.gotTotal[i] > CHEAT_RATIO * this.gaveTotal[i]) cheaters++;
+      guests += this.guestCount[i];
       const a = this.shareL[i],
         b = this.shareV[i],
         c = this.shareE[i];
@@ -812,6 +1287,12 @@ export class World {
       meanRadius: this.n ? rs / this.n : 0,
       sun: this.sun,
       species: sp,
+      bonded,
+      colonies: colonySpecies.size,
+      biggestColony: colonySpecies.size ? biggest : 0,
+      mixedColonies: [...colonySpecies.values()].filter((s) => s.size > 1).length,
+      cheaters,
+      guests,
     });
     if (this.history.length > STATS_MAX) {
       // Thin older history by half so the chart spans the whole run.

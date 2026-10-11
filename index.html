@@ -26,6 +26,7 @@
           <option value="tag">Tag</option>
           <option value="species">Species</option>
           <option value="feeding">Feeding mode</option>
+          <option value="colony">Colony</option>
           <option value="energy">Energy</option>
         </select>
       </label>
@@ -50,6 +51,11 @@
           <span><i style="background: var(--engulf)"></i>Engulfing</span>
           <span><i style="background: var(--debris)"></i>Debris</span>
         </div>
+      </section>
+      <section>
+        <h2>Colonies and partners</h2>
+        <canvas id="colonyChart" height="110"></canvas>
+        <div class="legend" id="colonyLegend"></div>
       </section>
       <section>
         <details id="tune">

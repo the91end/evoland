@@ -53,6 +53,24 @@ export interface Params {
   /** Fraction of a cell's energy left as debris when it dies. */
   debrisFraction: number;
 
+  // Colonies and partners
+  /** Bond upkeep per bond per tick (k_d). */
+  kBond: number;
+  maxBonds: number;
+  /** Chance per tick that touching friends bond, scaled by both adhesion genes. */
+  bondRate: number;
+  /** Fraction of spare energy a full sharer passes along its bonds per tick. */
+  shareRate: number;
+  /** Ticks over which a policing cell compares what it gave and got back. */
+  policingWindow: number;
+  /** By-product released per unit of food eaten (sugar, fertiliser). */
+  byproduct: number;
+  maxGuests: number;
+  /** Fraction of a guest's food it passes to its host. */
+  guestPass: number;
+  /** Host upkeep per guest per tick, times guest radius squared. */
+  kGuest: number;
+
   // Life cycle
   divisionLoss: number;
   divisionCooldown: number;
@@ -89,6 +107,16 @@ export const DEFAULT_PARAMS: Params = {
   ventRegen: 8,
   engulfGain: 0.6,
   debrisFraction: 0.3,
+
+  kBond: 0.002,
+  maxBonds: 6,
+  bondRate: 0.01,
+  shareRate: 0.05,
+  policingWindow: 200,
+  byproduct: 0.2,
+  maxGuests: 4,
+  guestPass: 0.5,
+  kGuest: 0.001,
 
   divisionLoss: 0.1,
   divisionCooldown: 60,

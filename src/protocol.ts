@@ -33,6 +33,15 @@ export interface Frame {
   motility: Float32Array;
   /** Energy as a fraction of max, per cell. */
   energy: Float32Array;
+  /** Bonded pairs as frame indices (a, b, a, b, ...). */
+  bonds: Uint32Array;
+  /** Colony id per cell (the id of one member cell), and colony size. */
+  colony: Uint32Array;
+  colonySize: Int32Array;
+  /** Guests per cell, and each guest slot's tag colour (maxGuests * 3 per cell). */
+  guests: Uint8Array;
+  guestTag: Float32Array;
+  maxGuests: number;
   nd: number;
   debris: Float32Array;
   vents: { x: number; z: number; strength: number; stock: number }[];
@@ -45,6 +54,8 @@ export interface Stats {
   totalBorn: number;
   engulfed: number;
   swaps: number;
+  captured: number;
+  policed: number;
 }
 
 export interface CellDetail {
@@ -68,7 +79,17 @@ export interface CellDetail {
     swap: number;
     divThreshold: number;
     mutationRate: number;
+    adhesion: number;
+    sharing: number;
+    policing: number;
+    symbiont: number;
   };
+  bonds: number;
+  colonySize: number;
+  /** Shared energy given and received recently. */
+  gave: number;
+  got: number;
+  guests: { id: number; energy: number; light: number; vent: number; engulf: number; tag: [number, number, number] }[];
   /** Ancestors from parent upward. */
   ancestors: ({ id: number } & LineageRecord)[];
   /** Living direct offspring. */

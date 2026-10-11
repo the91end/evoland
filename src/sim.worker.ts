@@ -119,6 +119,7 @@ function loop(): void {
 function sendFrame(): void {
   const w = world!;
   lastFrame = performance.now();
+  w.findColonies();
   const n = w.n;
   const ids = w.id.slice(0, n);
   const pos = new Float32Array(n * 3);
@@ -142,6 +143,21 @@ function sendFrame(): void {
     feed[i * 3 + 2] = w.shareE[i];
     energy[i] = w.energy[i] / w.maxE[i];
   }
+  const bondList: number[] = [];
+  for (let i = 0; i < n; i++)
+    for (let s = 0; s < w.bondCount[i]; s++) {
+      const j = w.bondTo[i * w.mb + s];
+      if (j > i && j < n) bondList.push(i, j);
+    }
+  const bonds = new Uint32Array(bondList);
+  const mg = w.mg;
+  const guests = w.guestCount.slice(0, n);
+  const guestTag = new Float32Array(n * mg * 3);
+  for (let i = 0; i < n; i++)
+    for (let s = 0; s < guests[i]; s++) {
+      const g = (i * mg + s) * G;
+      for (let k = 0; k < 3; k++) guestTag[(i * mg + s) * 3 + k] = w.guestGenes[g + 5 + k];
+    }
   const debris = new Float32Array(w.nd * 3);
   for (let d = 0; d < w.nd; d++) {
     debris[d * 3] = w.dx[d];
@@ -163,6 +179,12 @@ function sendFrame(): void {
     species: w.species.slice(0, n),
     motility: w.mot.slice(0, n),
     energy,
+    bonds,
+    colony: Uint32Array.from(w.colony.subarray(0, n), (c) => w.id[c]),
+    colonySize: w.colonySize.slice(0, n),
+    guests,
+    guestTag,
+    maxGuests: mg,
     nd: w.nd,
     debris,
     vents: w.vents.map((v) => ({ x: v.x, z: v.z, strength: v.strength, stock: v.stock / w.p.ventStock })),
@@ -178,6 +200,11 @@ function sendFrame(): void {
     frame.motility.buffer,
     energy.buffer,
     debris.buffer,
+    bonds.buffer,
+    frame.colony.buffer,
+    frame.colonySize.buffer,
+    guests.buffer,
+    guestTag.buffer,
   ]);
 }
 
@@ -191,6 +218,8 @@ function sendStats(): void {
     totalBorn: w.totalBorn,
     engulfed: w.engulfed,
     swaps: w.swaps,
+    captured: w.captured,
+    policed: w.policed,
   };
   post(msg);
 }
@@ -240,6 +269,11 @@ function sendInspect(): void {
       children,
       descendants,
       pos: [0, 0, 0],
+      bonds: 0,
+      colonySize: 0,
+      gave: 0,
+      got: 0,
+      guests: [],
     });
     return;
   }
@@ -260,5 +294,22 @@ function sendInspect(): void {
     children,
     descendants,
     pos: [w.x[i], w.y[i], w.z[i]],
+    bonds: w.bondCount[i],
+    colonySize: w.colonySize[i],
+    gave: w.gaveTotal[i],
+    got: w.gotTotal[i],
+    guests: Array.from({ length: w.guestCount[i] }, (_, s) => {
+      const g = i * w.mg + s;
+      const t = traitsOf(w.guestGenes, g * GENE_COUNT);
+      const o = g * GENE_COUNT;
+      return {
+        id: w.guestId[g],
+        energy: w.guestEnergy[g],
+        light: t.light,
+        vent: t.vent,
+        engulf: t.engulf,
+        tag: [w.guestGenes[o + 5], w.guestGenes[o + 6], w.guestGenes[o + 7]] as [number, number, number],
+      };
+    }),
   });
 }

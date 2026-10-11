@@ -83,6 +83,34 @@ export function drawPopulation(
   axes(g, w, h, maxY, history[history.length - 1].tick);
 }
 
+export const COLONY_SERIES: [keyof StatsSample, string, string][] = [
+  ['bonded', 'Cells in colonies', '#5fd3c6'],
+  ['biggestColony', 'Biggest colony', '#e9f6ff'],
+  ['mixedColonies', 'Mixed-species colonies', '#f0a3d8'],
+  ['cheaters', 'Cheaters', '#ff5d5d'],
+  ['guests', 'Guests inside hosts', '#9be36b'],
+];
+
+/** Colonies, partnerships, cheaters and guests over time. */
+export function drawColonies(canvas: HTMLCanvasElement, history: StatsSample[]): void {
+  const g = setup(canvas);
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  const hist = history.filter((s) => s.bonded !== undefined);
+  if (hist.length < 2) return;
+  const maxY = Math.max(1, ...hist.map((s) => Math.max(...COLONY_SERIES.map(([k]) => s[k] as number)))) * 1.05;
+  const x = (k: number) => (k / (hist.length - 1)) * w;
+  const y = (v: number) => h - (v / maxY) * h;
+  for (const [key, , col] of COLONY_SERIES) {
+    g.beginPath();
+    g.strokeStyle = col;
+    g.lineWidth = 1.5;
+    for (let k = 0; k < hist.length; k++) g.lineTo(x(k), y(hist[k][key] as number));
+    g.stroke();
+  }
+  axes(g, w, h, maxY, hist[hist.length - 1].tick);
+}
+
 /** Lines for cells by main feeding mode, plus debris. */
 export function drawFeeding(canvas: HTMLCanvasElement, history: StatsSample[]): void {
   const g = setup(canvas);

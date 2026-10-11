@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import './style.css';
 import { Pond, type ColourMode } from './view/pond';
-import { drawFeeding, drawPopulation } from './view/charts';
+import { COLONY_SERIES, drawColonies, drawFeeding, drawPopulation } from './view/charts';
 import { DEFAULT_PARAMS, type Params } from './sim/params';
 import { GENE_NAMES } from './sim/genome';
 import type { SpeciesInfo } from './sim/species';
@@ -147,17 +147,23 @@ window.addEventListener('keydown', (e) => {
 // Side panel: charts and species tree
 // ---------------------------------------------------------------------------
 
+$('colonyLegend').innerHTML = COLONY_SERIES.map(
+  ([, label, col]) => `<span><i style="background:${col}"></i>${label}</span>`,
+).join('');
+
 function drawSide(): void {
   if (!stats || $('side').classList.contains('closed')) return;
   drawPopulation($('popChart'), stats.history, stats.species, speciesCss);
   drawFeeding($('feedChart'), stats.history);
+  drawColonies($('colonyChart'), stats.history);
 
   const alive = stats.species.filter((s) => s.count > 0);
   const big = alive.filter((s) => s.count >= 10).length;
   $('speciesCount').textContent = `${big} with 10+ cells, ${alive.length} alive`;
   $('totals').textContent =
     `${stats.totalBorn.toLocaleString()} cells born · ${stats.engulfed.toLocaleString()} engulfed · ` +
-    `${stats.swaps.toLocaleString()} gene swaps`;
+    `${stats.swaps.toLocaleString()} gene swaps · ${stats.captured.toLocaleString()} kept as guests · ` +
+    `${stats.policed.toLocaleString()} bonds cut by policing`;
   $('speciesTree').replaceChildren(...speciesTree(stats.species));
 }
 
@@ -253,6 +259,12 @@ function showInspector(d: CellDetail): void {
         ['Gene swapping', t.swap.toFixed(2)],
         ['Divides at', pct(t.divThreshold)],
         ['Mutation rate', t.mutationRate.toFixed(3)],
+        ['Adhesion', t.adhesion.toFixed(2)],
+        ['Sharing', t.sharing.toFixed(2)],
+        ['Policing', t.policing.toFixed(2)],
+        ['Symbiont keeping', t.symbiont.toFixed(2)],
+        ['Bonds', `${d.bonds} (colony of ${d.colonySize})`],
+        ['Shared lately: gave / got', `${d.gave.toFixed(1)} / ${d.got.toFixed(1)}`],
         ['Height above floor', d.pos[1].toFixed(0)],
       ]
     : [
@@ -268,6 +280,12 @@ function showInspector(d: CellDetail): void {
     d.genes.forEach((g, k) => {
       html += `<tr><td class="muted small">${GENE_NAMES[k]}</td><td><span class="gene" style="width:${Math.max(2, g * 80)}px"></span> ${g.toFixed(2)}</td></tr>`;
     });
+    html += '</table>';
+  }
+  if (d.guests.length) {
+    html += '<h2>Guests inside</h2><table>';
+    for (const g of d.guests)
+      html += `<tr><td><span class="swatch" style="background:${tagCss(g.tag)}"></span>#${g.id}</td><td class="muted small">L/V/E ${pct(g.light)} / ${pct(g.vent)} / ${pct(g.engulf)} · ${g.energy.toFixed(1)} energy</td></tr>`;
     html += '</table>';
   }
   html += '<h2>Ancestors</h2>';
@@ -304,6 +322,13 @@ const LIVE: [keyof Params, string, number, number][] = [
   ['lifespan', 'Lifespan (ticks)', 300, 12000],
   ['mutationStep', 'Mutation step', 0, 0.2],
   ['maxSpeed', 'Top swimming speed', 0, 6],
+  ['bondRate', 'Bonding chance', 0, 0.1],
+  ['kBond', 'Bond upkeep', 0, 0.02],
+  ['shareRate', 'Sharing rate', 0, 0.3],
+  ['byproduct', 'By-product per food', 0, 1],
+  ['policingWindow', 'Policing window (ticks)', 20, 1000],
+  ['guestPass', 'Guest pays host', 0, 1],
+  ['kGuest', 'Guest upkeep', 0, 0.01],
 ];
 
 /** Parameters that shape the pond itself, applied on restart. */
@@ -314,8 +339,19 @@ const RESTART: [keyof Params, string][] = [
   ['ticksPerSecond', 'Ticks per second at 1×'],
   ['ventLifetime', 'Vent lifetime (ticks)'],
   ['energyPerVolume', 'Energy stored per volume'],
+  ['maxBonds', 'Bonds per cell'],
+  ['maxGuests', 'Guests per host'],
 ];
-const INT_KEYS = new Set<keyof Params>(['dayLength', 'ventCount', 'lifespan', 'startingCells', 'cellCap']);
+const INT_KEYS = new Set<keyof Params>([
+  'dayLength',
+  'ventCount',
+  'lifespan',
+  'startingCells',
+  'cellCap',
+  'policingWindow',
+  'maxBonds',
+  'maxGuests',
+]);
 
 function loadOverrides(): Partial<Params> {
   try {

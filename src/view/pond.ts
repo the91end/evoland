@@ -4,7 +4,7 @@ import type { Params } from '../sim/params';
 import { currentAt } from '../sim/world';
 import type { Frame } from '../protocol';
 
-export type ColourMode = 'tag' | 'species' | 'feeding' | 'energy';
+export type ColourMode = 'tag' | 'species' | 'feeding' | 'energy' | 'colony';
 
 const DRIFT_PARTICLES = 1600;
 const FEED_COLOURS = [new THREE.Color('#e8d94a'), new THREE.Color('#f0703a'), new THREE.Color('#b06cf0')];
@@ -30,6 +30,8 @@ export class Pond {
   private cells!: THREE.InstancedMesh;
   private tails!: THREE.InstancedMesh;
   private debris!: THREE.Points;
+  private bonds!: THREE.LineSegments;
+  private guests!: THREE.InstancedMesh;
   private drift!: THREE.Points;
   private ventSprites: THREE.Sprite[] = [];
   private ventTexture = radialTexture();
@@ -181,6 +183,28 @@ export class Pond {
     this.tails.count = 0;
     this.world.add(this.tails);
 
+    // Bonds: a line between each bonded pair.
+    const bondGeo = new THREE.BufferGeometry();
+    bondGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(p.cellCap * p.maxBonds * 3), 3));
+    bondGeo.setDrawRange(0, 0);
+    this.bonds = new THREE.LineSegments(
+      bondGeo,
+      new THREE.LineBasicMaterial({ color: '#e9f6ff', transparent: true, opacity: 0.7 }),
+    );
+    this.bonds.frustumCulled = false;
+    this.world.add(this.bonds);
+
+    // Guests: small glowing beads set into their host's surface.
+    this.guests = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(1, 8, 6),
+      new THREE.MeshBasicMaterial(),
+      p.cellCap * p.maxGuests,
+    );
+    this.guests.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(p.cellCap * p.maxGuests * 3), 3);
+    this.guests.frustumCulled = false;
+    this.guests.count = 0;
+    this.world.add(this.guests);
+
     const debrisGeo = new THREE.BufferGeometry();
     debrisGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(p.cellCap * 3), 3));
     debrisGeo.setDrawRange(0, 0);
@@ -278,6 +302,7 @@ export class Pond {
     this.drawnIds = f.ids;
 
     let tails = 0;
+    let guestN = 0;
     let followed = -1;
     const colors = this.cells.instanceColor!.array as Float32Array;
     for (let i = 0; i < n; i++) {
@@ -310,6 +335,15 @@ export class Pond {
       colors[i * 3 + 2] = this.c.b;
       if (f.ids[i] === this.followId) followed = i;
 
+      for (let s = 0; s < f.guests[i]; s++) {
+        const d = GUEST_DIRS[s % GUEST_DIRS.length];
+        this.m.makeScale(r * 0.38, r * 0.38, r * 0.38).setPosition(x + d[0] * r * 0.72, y + d[1] * r * 0.72, z + d[2] * r * 0.72);
+        this.guests.setMatrixAt(guestN, this.m);
+        const o = (i * f.maxGuests + s) * 3;
+        this.c.setRGB(f.guestTag[o], f.guestTag[o + 1], f.guestTag[o + 2]).offsetHSL(0, 0, 0.15);
+        this.guests.setColorAt(guestN++, this.c);
+      }
+
       // Tail behind motile, moving cells.
       const vx = f.vel[i * 3],
         vy = f.vel[i * 3 + 1],
@@ -335,6 +369,24 @@ export class Pond {
     (dpos.array as Float32Array).set(f.debris.subarray(0, Math.min(f.debris.length, dpos.array.length)));
     dpos.needsUpdate = true;
     this.debris.geometry.setDrawRange(0, Math.min(f.nd, dpos.count));
+
+    this.guests.count = guestN;
+    this.guests.instanceMatrix.needsUpdate = true;
+    if (this.guests.instanceColor) this.guests.instanceColor.needsUpdate = true;
+
+    const bpos = this.bonds.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const barr = bpos.array as Float32Array;
+    let nb = 0;
+    for (let k = 0; k + 1 < f.bonds.length && (nb + 2) * 3 <= barr.length; k += 2) {
+      const a = f.bonds[k] * 3;
+      const b = f.bonds[k + 1] * 3;
+      // Skip bonds that wrap across the pond edge.
+      if (Math.abs(this.drawn[a] - this.drawn[b]) > W / 2 || Math.abs(this.drawn[a + 2] - this.drawn[b + 2]) > W / 2) continue;
+      barr.set(this.drawn.subarray(a, a + 3), nb++ * 3);
+      barr.set(this.drawn.subarray(b, b + 3), nb++ * 3);
+    }
+    bpos.needsUpdate = true;
+    this.bonds.geometry.setDrawRange(0, nb);
 
     if (this.followId !== null && followed >= 0) {
       const r = f.radius[followed];
@@ -376,6 +428,10 @@ export class Pond {
         );
         break;
       }
+      case 'colony':
+        if (f.colonySize[i] < 2) this.c.setRGB(0.35, 0.42, 0.46);
+        else this.c.setHSL((f.colony[i] * 0.61803) % 1, 0.7, 0.55);
+        break;
       case 'energy':
         this.c.setHSL(0.55 - 0.45 * f.energy[i], 0.8, 0.25 + 0.4 * f.energy[i]);
         break;
@@ -436,6 +492,13 @@ export class Pond {
     }
   }
 }
+
+const GUEST_DIRS = [
+  [0.6, 0.6, 0.5],
+  [-0.6, 0.3, -0.6],
+  [0.2, -0.7, 0.6],
+  [-0.4, -0.5, -0.7],
+];
 
 function radialTexture(): THREE.Texture {
   const c = document.createElement('canvas');

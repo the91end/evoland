@@ -141,3 +141,41 @@ describe('sun', () => {
     expect(sunAt(2250, 3000)).toBe(0);
   });
 });
+
+describe('colonies and partners', () => {
+  it('keeps every bond two-sided and pointing at a living cell', () => {
+    const w = new World('bonds', SMALL);
+    for (let t = 0; t < 600; t++) w.step();
+    let bonds = 0;
+    for (let i = 0; i < w.n; i++) {
+      expect(w.bondCount[i]).toBeLessThanOrEqual(w.mb);
+      for (let s = 0; s < w.bondCount[i]; s++) {
+        const j = w.bondTo[i * w.mb + s];
+        expect(j).toBeGreaterThanOrEqual(0);
+        expect(j).toBeLessThan(w.n);
+        expect(j).not.toBe(i);
+        expect(w.bondSlot(j, i)).toBeGreaterThanOrEqual(0);
+        bonds++;
+      }
+    }
+    expect(bonds).toBeGreaterThan(0);
+  });
+
+  it('labels bonded cells as one colony', () => {
+    const w = new World('colony', SMALL);
+    for (let t = 0; t < 300; t++) w.step();
+    w.findColonies();
+    for (let i = 0; i < w.n; i++)
+      for (let s = 0; s < w.bondCount[i]; s++) {
+        const j = w.bondTo[i * w.mb + s];
+        expect(w.colony[j]).toBe(w.colony[i]);
+        expect(w.colonySize[i]).toBeGreaterThan(1);
+      }
+  });
+
+  it('keeps guest counts within the limit', () => {
+    const w = new World('guests', { ...SMALL, startTolerance: 0 });
+    for (let t = 0; t < 600; t++) w.step();
+    for (let i = 0; i < w.n; i++) expect(w.guestCount[i]).toBeLessThanOrEqual(w.mg);
+  });
+});
