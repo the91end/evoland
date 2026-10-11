@@ -210,6 +210,33 @@ label.tune.changed .value {
   color: var(--accent);
 }
 
+.touch-only {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .touch-only {
+    display: inline;
+  }
+  label.tune {
+    cursor: pointer;
+    padding: 4px 0;
+  }
+  label.tune input {
+    pointer-events: none;
+    opacity: 0.35;
+    touch-action: pan-y;
+  }
+  label.tune.active input {
+    pointer-events: auto;
+    opacity: 1;
+    touch-action: none;
+  }
+  label.tune.active span:first-child {
+    color: var(--accent);
+  }
+}
+
 #speciesTree .row {
   display: flex;
   align-items: center;

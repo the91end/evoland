@@ -406,6 +406,15 @@ function buildTune(): void {
       send({ type: 'params', params: { [key]: v } });
     });
     input.addEventListener('change', saveOverrides);
+    // On touch screens a slider stays locked until its name is tapped, so
+    // scrolling the panel can't drag it by accident.
+    row.addEventListener('click', (e) => {
+      if (e.target === input) return;
+      e.preventDefault();
+      const open = !row.classList.contains('active');
+      box.querySelectorAll('label.tune.active').forEach((r) => r.classList.remove('active'));
+      row.classList.toggle('active', open);
+    });
     row.append(name, value, input);
     box.append(row);
   }
