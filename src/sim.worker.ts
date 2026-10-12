@@ -5,7 +5,10 @@
  */
 import { World } from './sim/world';
 import { GENE_COUNT, OUTPUTS, SWITCHES, traitsOf } from './sim/genome';
-import type { CellDetail, Frame, FromWorker, Stats, ToWorker } from './protocol';
+import type { CellDetail, Frame, FromWorker, OrganismDetail, Stats, ToWorker } from './protocol';
+
+/** Most member cells sent for one organism. */
+const ORGANISM_MAX = 256;
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -296,6 +299,7 @@ function sendInspect(): void {
       switches: [],
       outputs: [],
       gamete: 0,
+      organism: null,
     });
     return;
   }
@@ -324,6 +328,7 @@ function sendInspect(): void {
     switches: Array.from(w.sw.subarray(i * SWITCHES, (i + 1) * SWITCHES)),
     outputs: Array.from(w.out.subarray(i * OUTPUTS, (i + 1) * OUTPUTS)),
     gamete: w.gamete[i],
+    organism: organismOf(w, i),
     guests: Array.from({ length: w.guestCount[i] }, (_, s) => {
       const g = i * w.mg + s;
       const t = traitsOf(w.guestGenes, g * GENE_COUNT);
@@ -338,4 +343,43 @@ function sendInspect(): void {
       };
     }),
   });
+}
+
+/** Walks the bonds out from cell i to collect its whole organism. */
+function organismOf(w: World, i: number): OrganismDetail | null {
+  if (w.bondCount[i] === 0) return null;
+  const index = new Map<number, number>([[i, 0]]);
+  const order = [i];
+  const bonds: [number, number][] = [];
+  let truncated = false;
+  for (let k = 0; k < order.length; k++) {
+    const a = order[k];
+    for (let s = 0; s < w.bondCount[a]; s++) {
+      const b = w.bondTo[a * w.mb + s];
+      let j = index.get(b);
+      if (j === undefined) {
+        if (order.length >= ORGANISM_MAX) {
+          truncated = true;
+          continue;
+        }
+        j = order.length;
+        index.set(b, j);
+        order.push(b);
+      }
+      if (k < j) bonds.push([k, j]);
+    }
+  }
+  return {
+    cells: order.map((c) => ({
+      id: w.id[c],
+      type: w.cellType[c],
+      energy: w.energy[c] / w.maxE[c],
+      radius: w.radius[c],
+      x: w.x[c],
+      y: w.y[c],
+      z: w.z[c],
+    })),
+    bonds,
+    truncated,
+  };
 }

@@ -65,6 +65,15 @@ export interface Stats {
   fusions: number;
 }
 
+export interface OrganismDetail {
+  /** Member cells; the inspected cell is index 0. */
+  cells: { id: number; type: number; energy: number; radius: number; x: number; y: number; z: number }[];
+  /** Bonds as pairs of indices into cells. */
+  bonds: [number, number][];
+  /** True when the organism has more cells than were sent. */
+  truncated: boolean;
+}
+
 export interface CellDetail {
   type: 'inspect';
   id: number;
@@ -100,6 +109,8 @@ export interface CellDetail {
   outputs: number[];
   /** Ticks left to find a partner, for sex cells. */
   gamete: number;
+  /** The whole organism (bonded group) this cell belongs to, when it has 2+ cells. */
+  organism: OrganismDetail | null;
   bonds: number;
   colonySize: number;
   /** Shared energy given and received recently. */

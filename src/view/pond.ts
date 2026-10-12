@@ -6,6 +6,9 @@ import type { Frame } from '../protocol';
 
 export type ColourMode = 'tag' | 'species' | 'feeding' | 'energy' | 'colony' | 'type' | 'multi';
 
+/** Most organism members outlined around a followed cell. */
+const MAX_MEMBERS = 512;
+
 /** Cell type colours, in CELL_TYPES order. */
 export const TYPE_COLOURS = ['#6f8794', '#e8d94a', '#5fb8ff', '#5fd3c6', '#ff7a5c', '#b06cf0', '#ffffff', '#ff5fc8'];
 
@@ -39,6 +42,8 @@ export class Pond {
   private ventSprites: THREE.Sprite[] = [];
   private ventTexture = radialTexture();
   private selection: THREE.Mesh;
+  /** Wire shells around every other cell of the followed cell's organism. */
+  private members: THREE.InstancedMesh;
   private sunLight: THREE.DirectionalLight;
   private ambient: THREE.HemisphereLight;
   private surface!: THREE.Mesh;
@@ -88,6 +93,14 @@ export class Pond {
     );
     this.selection.visible = false;
     this.scene.add(this.selection);
+    this.members = new THREE.InstancedMesh(
+      this.selection.geometry,
+      new THREE.MeshBasicMaterial({ color: '#ffe680', wireframe: true, transparent: true, opacity: 0.45 }),
+      MAX_MEMBERS,
+    );
+    this.members.count = 0;
+    this.members.frustumCulled = false;
+    this.scene.add(this.members);
 
     this.build(params);
     window.addEventListener('resize', () => this.resize(container));
@@ -101,6 +114,7 @@ export class Pond {
     this.prev = this.curr = null;
     this.followId = null;
     this.selection.visible = false;
+    this.members.count = 0;
     const W = p.width;
     const H = p.depth;
     const centre = new THREE.Vector3(W / 2, H / 2, W / 2);
@@ -402,6 +416,18 @@ export class Pond {
       this.selection.visible = true;
       this.selection.position.copy(this.v);
       this.selection.scale.setScalar(r * 1.8 + 1);
+      let nm = 0;
+      if (f.colonySize[followed] >= 2) {
+        const col = f.colony[followed];
+        for (let i = 0; i < n && nm < MAX_MEMBERS; i++) {
+          if (i === followed || f.colony[i] !== col) continue;
+          const ri = f.radius[i] * 1.5 + 0.5;
+          this.m.makeScale(ri, ri, ri).setPosition(this.drawn[i * 3], this.drawn[i * 3 + 1], this.drawn[i * 3 + 2]);
+          this.members.setMatrixAt(nm++, this.m);
+        }
+      }
+      this.members.count = nm;
+      this.members.instanceMatrix.needsUpdate = true;
       const delta = this.v.clone().sub(this.controls.target);
       if (delta.length() > W / 3) {
         // Jumped across the wrap: move the camera with it.
@@ -414,6 +440,7 @@ export class Pond {
       }
     } else {
       this.selection.visible = false;
+      this.members.count = 0;
     }
   }
 

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import './style.css';
 import { Pond, TYPE_COLOURS, type ColourMode } from './view/pond';
+import { drawOrganism, organismCellAt } from './view/organism';
 import { COLONY_SERIES, drawColonies, drawFeeding, drawPopulation, drawTypes } from './view/charts';
 import { DEFAULT_PARAMS, type Params } from './sim/params';
 import { CELL_TYPES, GENE_NAMES, OUTPUT_NAMES } from './sim/genome';
@@ -311,7 +312,30 @@ function showInspector(d: CellDetail): void {
       ];
   rows.push(['Living offspring', String(d.children)], ['Living descendants', String(d.descendants)]);
 
-  let html = '<table>' + rows.map(([k, v]) => `<tr><td class="muted">${k}</td><td>${v}</td></tr>`).join('') + '</table>';
+  const org = d.alive ? d.organism : null;
+  let html = '';
+  if (org) {
+    const counts = new Array<number>(CELL_TYPES.length).fill(0);
+    let energy = 0;
+    for (const c of org.cells) {
+      counts[c.type]++;
+      energy += c.energy;
+    }
+    const kinds = counts.filter((c) => c > 0).length;
+    const label = org.cells.length >= 3 && kinds >= 2 ? 'Multicellular organism' : 'Colony';
+    html +=
+      `<h2>${label}: ${org.cells.length}${org.truncated ? '+' : ''} cells, ${kinds} cell type${kinds > 1 ? 's' : ''}</h2>` +
+      '<canvas id="orgCanvas"></canvas>' +
+      '<p class="muted small">Tap a cell in the drawing to inspect it. Ring = this cell, faint = low energy.</p>' +
+      '<div class="legend">' +
+      counts
+        .map((c, k) => (c ? `<span><i style="background:${TYPE_COLOURS[k]}"></i>${CELL_TYPES[k]} ${c}</span>` : ''))
+        .join('') +
+      '</div>' +
+      `<p class="muted small">Average energy ${pct(energy / org.cells.length)} · ${org.bonds.length} bonds</p>` +
+      '<h2>This cell</h2>';
+  }
+  html += '<table>' + rows.map(([k, v]) => `<tr><td class="muted">${k}</td><td>${v}</td></tr>`).join('') + '</table>';
   if (d.genes.length) {
     html += '<h2>Genome</h2><table>';
     d.genes.forEach((g, k) => {
@@ -336,6 +360,18 @@ function showInspector(d: CellDetail): void {
     html += '</table>';
   }
   $('inspBody').innerHTML = html;
+  if (org) {
+    const c = $<HTMLCanvasElement>('orgCanvas');
+    drawOrganism(c, org, TYPE_COLOURS, $('inspBody').clientWidth || 280);
+    c.addEventListener('click', (e) => {
+      const r = c.getBoundingClientRect();
+      const id = organismCellAt(e.clientX - r.left, e.clientY - r.top);
+      if (id !== null && id !== pond.followId) {
+        pond.followId = id;
+        send({ type: 'inspect', id });
+      }
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -515,3 +551,8 @@ function frame(): void {
 
 start();
 requestAnimationFrame(frame);
+
+// Keep the side panels below the top bar, however many rows it wraps to.
+new ResizeObserver(() => {
+  document.documentElement.style.setProperty('--bar-h', `${$('bar').offsetHeight}px`);
+}).observe($('bar'));
