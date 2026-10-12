@@ -1,9 +1,16 @@
 import { DEFAULT_PARAMS, type Params } from './params';
 import { Rng, hashSeed } from './rng';
 import {
+  CELL_TYPES,
   GENE_COUNT,
   Gene,
+  OUTPUTS,
+  Output,
+  SWITCHES,
+  cellTypeOf,
   efficiency,
+  recombine,
+  runSwitches,
   mutate,
   swapGenes,
   tagDistance,
@@ -41,6 +48,13 @@ const BYPRODUCT_ABSORB = 0.1;
 const ENGULF_DEBRIS = 0.1;
 /** A cell counts as a cheater when it got back this many times what it gave. */
 const CHEAT_RATIO = 2;
+/** A cell type's outputs must pass this to count: dividing below -0.2 stops division. */
+const NO_DIVIDE = -0.2;
+/** Ticks a cell that just left its colony stays unable to bond. */
+const LEAVE_TICKS = 200;
+/** Cell type index of sex cells and germ cells. */
+const SEX_TYPE = CELL_TYPES.length - 1;
+const GERM_TYPE = Output.Germ + 1;
 
 export interface Vent {
   x: number;
@@ -82,6 +96,14 @@ export interface StatsSample {
   cheaters: number;
   /** Guests living inside hosts. */
   guests: number;
+  /** Living cells of each cell type (see CELL_TYPES). */
+  types: number[];
+  /** Mean distinct cell types in colonies of 3+ cells. */
+  typesPerColony: number;
+  /** Colonies of 3+ cells that carry a germ cell. */
+  germColonies: number;
+  /** Sex cells looking for a partner. */
+  gametes: number;
 }
 
 export class World {
@@ -128,6 +150,21 @@ export class World {
   readonly sharing: Float32Array;
   readonly policing: Float32Array;
   readonly symbiont: Float32Array;
+  readonly colonyLimit: Int32Array;
+  readonly sexG: Float32Array;
+  readonly signalG: Float32Array;
+
+  // ---- switch network: SWITCHES states and OUTPUTS outputs per cell ----
+  readonly sw: Float32Array;
+  readonly out: Float32Array;
+  readonly cellType: Uint8Array;
+  /** Signal each cell broadcast last tick. */
+  readonly signal: Float32Array;
+  /** Ticks a sex cell has left to find a partner; 0 for other cells. */
+  readonly gamete: Int16Array;
+  /** Ticks left before a cell that left its colony may bond again. */
+  readonly noBond: Int16Array;
+  private readonly inputs = new Float32Array(6);
 
   // ---- bonds: up to maxBonds slots per cell, by cell index ----
   readonly mb: number;
@@ -191,6 +228,9 @@ export class World {
   swaps = 0;
   captured = 0;
   policed = 0;
+  fragments = 0;
+  germReleases = 0;
+  fusions = 0;
 
   constructor(seed: string | number = 1, params: Partial<Params> = {}) {
     this.p = { ...DEFAULT_PARAMS, ...params };
@@ -231,6 +271,15 @@ export class World {
     this.sharing = new Float32Array(cap);
     this.policing = new Float32Array(cap);
     this.symbiont = new Float32Array(cap);
+    this.colonyLimit = new Int32Array(cap);
+    this.sexG = new Float32Array(cap);
+    this.signalG = new Float32Array(cap);
+    this.sw = new Float32Array(cap * SWITCHES);
+    this.out = new Float32Array(cap * OUTPUTS);
+    this.cellType = new Uint8Array(cap);
+    this.signal = new Float32Array(cap);
+    this.gamete = new Int16Array(cap);
+    this.noBond = new Int16Array(cap);
 
     const mb = (this.mb = p.maxBonds);
     this.bondCount = new Uint8Array(cap);
@@ -298,6 +347,8 @@ export class World {
       g[Gene.Tolerance] = clamp01(2 * p.startTolerance + rng.gauss() * 0.05);
       // Policing starts near zero and has to evolve.
       g[Gene.Policing] = clamp01(0.05 + rng.gauss() * 0.02);
+      // Sex is rare to begin with; switch weights start near 0.5 (no effect).
+      g[Gene.Sex] = clamp01(0.1 + rng.gauss() * 0.03);
       g[Gene.LikeR] = g[Gene.TagR];
       g[Gene.LikeG] = g[Gene.TagG];
       g[Gene.LikeB] = g[Gene.TagB];
@@ -359,6 +410,12 @@ export class World {
     this.gaveTotal[i] = this.gotTotal[i] = 0;
     this.colony[i] = i;
     this.colonySize[i] = 1;
+    this.sw.fill(0.5, i * SWITCHES, (i + 1) * SWITCHES);
+    this.out.fill(0, i * OUTPUTS, (i + 1) * OUTPUTS);
+    this.cellType[i] = 0;
+    this.signal[i] = 0;
+    this.gamete[i] = 0;
+    this.noBond[i] = 0;
     this.refreshTraits(i);
     this.energy[i] = 0;
     this.totalBorn++;
@@ -383,6 +440,9 @@ export class World {
     this.sharing[i] = t.sharing;
     this.policing[i] = t.policing;
     this.symbiont[i] = t.symbiont;
+    this.colonyLimit[i] = t.colonyLimit;
+    this.sexG[i] = t.sex;
+    this.signalG[i] = t.signal;
     if (this.energy[i] > this.maxE[i]) this.energy[i] = this.maxE[i];
   }
 
@@ -573,6 +633,19 @@ export class World {
     const zi = this.z[i];
     const ri = this.radius[i];
     const half = p.width / 2;
+    const isGamete = this.gamete[i] > 0;
+    if (isGamete && --this.gamete[i] === 0) {
+      // A sex cell that found no partner dies.
+      this.kill(i, true);
+      return;
+    }
+    if (this.noBond[i] > 0) this.noBond[i]--;
+
+    // ---- switches ----
+    const o = i * OUTPUTS;
+    this.runSwitchesFor(i);
+    const out = this.out;
+    this.cellType[i] = isGamete ? SEX_TYPE : cellTypeOf(out, o);
 
     // ---- sense + contacts (one neighbour pass) ----
     let preyDx = 0,
@@ -628,6 +701,9 @@ export class World {
       this.y[j] += dy * push * 0.5;
       this.z[j] += dz * push * 0.5;
 
+      if (isGamete && this.gamete[j] > 0 && friend && tagDistance(genes, i * G, genes, j * G) <= this.tol[j]) {
+        if (this.fuse(i, j)) return;
+      }
       if (!friend) {
         if (
           canEngulf &&
@@ -636,7 +712,9 @@ export class World {
           rng.chance(this.shareE[i])
         ) {
           this.engulfCd[i] = ENGULF_COOLDOWN;
-          if (rng.chance(ri / (ri + rj))) this.engulf(i, j);
+          // Defence cells are hard to swallow.
+          const guard = 1 - Math.max(0, out[j * OUTPUTS + Output.Defend]);
+          if (rng.chance((guard * ri) / (ri + rj))) this.engulf(i, j);
         }
       } else {
         if (rng.chance(this.swap[i] * FRIEND_SWAP_RATE)) {
@@ -647,9 +725,13 @@ export class World {
         // Friends may bond; the other cell's view doesn't matter, which is
         // the opening a tag-mimicking cheater uses.
         if (
+          !isGamete &&
+          this.gamete[j] === 0 &&
+          this.noBond[i] === 0 &&
+          this.noBond[j] === 0 &&
           this.bondCount[i] < this.mb &&
           this.bondCount[j] < this.mb &&
-          rng.chance(this.adhesion[i] * this.adhesion[j] * p.bondRate) &&
+          rng.chance(this.stickiness(i) * this.stickiness(j) * p.bondRate) &&
           this.bondSlot(i, j) < 0
         ) {
           this.addBond(i, j);
@@ -699,7 +781,7 @@ export class World {
     sy += rng.gauss() * 0.3;
     sz += rng.gauss() * 0.3;
     const sl = Math.hypot(sx, sy, sz) || 1;
-    const f = this.mot[i] * Math.min(1, sl);
+    const f = this.mot[i] * Math.min(1, sl) * (1 + out[o + Output.Swim]);
     this.force[i] = f;
     const speed = (f * p.maxSpeed) / Math.sqrt(ri);
     this.vx[i] = 0.6 * this.vx[i] + 0.4 * (sx / sl) * speed;
@@ -712,8 +794,9 @@ export class World {
 
     // ---- feed ----
     const r2 = r2i;
-    const lightFood = effL > 0 ? this.lightGain(i) : 0;
-    const ventFood = effV > 0 ? this.feedOnVents(i, effV * p.kVent * r2) : 0;
+    const feedBoost = 1 + out[o + Output.Feed];
+    const lightFood = effL > 0 ? this.lightGain(i) * feedBoost : 0;
+    const ventFood = effV > 0 ? this.feedOnVents(i, effV * p.kVent * r2 * feedBoost) : 0;
     let gain = lightFood + ventFood + this.absorbByproducts(i);
     this.releaseByproducts(i, lightFood, ventFood);
     if (this.guestCount[i] > 0) gain += this.updateGuests(i);
@@ -730,9 +813,97 @@ export class World {
       this.kill(i, true);
       return;
     }
-    if (this.cooldown[i] === 0 && this.energy[i] >= this.divThr[i] * this.maxE[i] && this.n < this.cap) {
+    if (isGamete) return;
+    if (this.cellType[i] === GERM_TYPE && this.bondCount[i] > 0) {
+      // Germ cells inside a colony store energy instead of dividing.
+      if (this.energy[i] >= p.germEnergy * this.maxE[i]) this.releaseGerm(i);
+      return;
+    }
+    const div = out[o + Output.Divide];
+    if (
+      div > NO_DIVIDE &&
+      this.cooldown[i] === 0 &&
+      this.energy[i] >= this.divThr[i] * (1 - 0.3 * Math.max(0, div)) * this.maxE[i] &&
+      this.n < this.cap
+    ) {
       this.divide(i);
     }
+  }
+
+  /** Feeds a cell's senses into its switch network. */
+  private runSwitchesFor(i: number): void {
+    const inp = this.inputs;
+    const nb = this.bondCount[i];
+    let sig = 0;
+    for (let s = 0; s < nb; s++) sig += this.signal[this.bondTo[i * this.mb + s]];
+    inp[0] = nb / this.mb;
+    inp[1] = nb > 0 ? sig / nb : 0;
+    inp[2] = this.energy[i] / this.maxE[i];
+    inp[3] = this.lightAt(this.y[i]);
+    inp[4] = this.age[i] / this.lifespan[i];
+    inp[5] = 1;
+    runSwitches(this.genes, i * GENE_COUNT, inp, this.sw, i * SWITCHES, this.out, i * OUTPUTS);
+    // The first switch drives the signal partners hear next tick.
+    this.signal[i] = this.signalG[i] * this.sw[i * SWITCHES];
+  }
+
+  /** Adhesion after the switch network has had its say. */
+  private stickiness(i: number): number {
+    return clamp01(this.adhesion[i] * (1 + this.out[i * OUTPUTS + Output.Adhere]));
+  }
+
+  /**
+   * A full germ cell leaves its colony. It either founds a new colony by
+   * dividing, or (with the sex gene's chance) becomes a sex cell that has a
+   * limited time to fuse with another.
+   */
+  private releaseGerm(i: number): void {
+    while (this.bondCount[i] > 0) this.removeBondAt(i, 0);
+    this.noBond[i] = LEAVE_TICKS;
+    this.germReleases++;
+    if (this.rng.chance(this.sexG[i])) {
+      this.gamete[i] = this.p.gameteLife;
+      this.cellType[i] = SEX_TYPE;
+    }
+  }
+
+  /**
+   * Two sex cells fuse into one new cell. Genes come from either parent
+   * (switches in whole blocks); guests come only from the bigger, egg-like
+   * parent.
+   */
+  private fuse(a: number, b: number): boolean {
+    if (this.n >= this.cap) return false;
+    const { p, rng } = this;
+    const G = GENE_COUNT;
+    const [egg, sperm] = this.radius[a] >= this.radius[b] ? [a, b] : [b, a];
+    const c = this.addCell(
+      this.genes,
+      egg * G,
+      this.x[egg],
+      this.y[egg],
+      this.z[egg],
+      this.id[egg],
+      Math.max(this.gen[a], this.gen[b]) + 1,
+    );
+    recombine(this.genes, c * G, this.genes, egg * G, this.genes, sperm * G, rng);
+    mutate(this.genes, c * G, this.mutRate[egg], p.mutationStep, rng);
+    this.refreshTraits(c);
+    this.species[c] = this.species[egg];
+    const rec = this.lineage.get(this.id[c]);
+    if (rec) rec.species = this.species[egg];
+    this.energy[c] = Math.min(this.maxE[c], this.energy[a] + this.energy[b]);
+    const mg = this.mg;
+    const ng = this.guestCount[egg];
+    this.guestGenes.copyWithin(c * mg * G, egg * mg * G, (egg * mg + ng) * G);
+    this.guestEnergy.copyWithin(c * mg, egg * mg, egg * mg + ng);
+    this.guestId.copyWithin(c * mg, egg * mg, egg * mg + ng);
+    this.guestCount[c] = ng;
+    this.guestCount[egg] = 0;
+    this.kill(a, false);
+    this.kill(b, false);
+    this.fusions++;
+    return true;
   }
 
   /** Takes vent food for cell i, draining vent stock; returns energy gained. */
@@ -770,6 +941,10 @@ export class World {
     if (rec) rec.species = this.species[i];
     this.energy[i] = e;
     this.energy[c] = Math.min(e, this.maxE[c]);
+    // Daughters keep their mother's switch states, so cell types breed true.
+    this.sw.copyWithin(c * SWITCHES, i * SWITCHES, (i + 1) * SWITCHES);
+    this.out.copyWithin(c * OUTPUTS, i * OUTPUTS, (i + 1) * OUTPUTS);
+    this.cellType[c] = this.cellType[i];
     this.cooldown[i] = p.divisionCooldown;
     // Staying stuck together after dividing is the first step to a colony.
     if (rng.chance(this.adhesion[i]) && this.bondCount[i] < this.mb) this.addBond(i, c);
@@ -884,9 +1059,12 @@ export class World {
       this.radius, this.maxE, this.shareL, this.shareV, this.shareE, this.mot, this.tol, this.swap,
       this.divThr, this.mutRate, this.adhesion, this.sharing, this.policing, this.symbiont,
       this.bondCount, this.gaveTotal, this.gotTotal, this.colony, this.colonySize, this.guestCount,
+      this.colonyLimit, this.sexG, this.signalG, this.cellType, this.signal, this.gamete, this.noBond,
     ];
     for (const a of arrays) a[to] = a[from];
     this.genes.copyWithin(to * GENE_COUNT, from * GENE_COUNT, (from + 1) * GENE_COUNT);
+    this.sw.copyWithin(to * SWITCHES, from * SWITCHES, (from + 1) * SWITCHES);
+    this.out.copyWithin(to * OUTPUTS, from * OUTPUTS, (from + 1) * OUTPUTS);
     const mb = this.mb;
     this.bondTo.copyWithin(to * mb, from * mb, (from + 1) * mb);
     this.bondGave.copyWithin(to * mb, from * mb, (from + 1) * mb);
@@ -998,6 +1176,25 @@ export class World {
       this.gaveTotal[i] *= decay;
       this.gotTotal[i] *= decay;
       const police = (this.tick + i) % POLICE_EVERY === 0 && this.policing[i] > 0;
+      if (
+        this.bondCount[i] > 0 &&
+        this.colonySize[i] > this.colonyLimit[i] &&
+        rng.chance(p.fragmentRate)
+      ) {
+        // Too big: break the bond that carries the least shared energy.
+        let weakest = 0;
+        let least = Infinity;
+        for (let s = 0; s < this.bondCount[i]; s++) {
+          const k = i * mb + s;
+          const flow = this.bondGave[k] + this.bondGot[k];
+          if (flow < least) {
+            least = flow;
+            weakest = s;
+          }
+        }
+        this.removeBondAt(i, weakest);
+        this.fragments++;
+      }
       for (let s = this.bondCount[i] - 1; s >= 0; s--) {
         const k = i * mb + s;
         this.bondGave[k] *= decay;
@@ -1256,7 +1453,14 @@ export class World {
       guests = 0;
     const colonySpecies = new Map<number, Set<number>>();
     let biggest = 1;
+    const types = new Array<number>(CELL_TYPES.length).fill(0);
+    const colonyTypes = new Map<number, number>();
     for (let i = 0; i < this.n; i++) {
+      types[this.cellType[i]]++;
+      if (this.colonySize[i] >= 3) {
+        const c = this.colony[i];
+        colonyTypes.set(c, (colonyTypes.get(c) ?? 0) | (1 << this.cellType[i]));
+      }
       if (this.bondCount[i] > 0) {
         bonded++;
         const c = this.colony[i];
@@ -1293,6 +1497,12 @@ export class World {
       mixedColonies: [...colonySpecies.values()].filter((s) => s.size > 1).length,
       cheaters,
       guests,
+      types,
+      typesPerColony: colonyTypes.size
+        ? [...colonyTypes.values()].reduce((sum, mask) => sum + popcount(mask), 0) / colonyTypes.size
+        : 0,
+      germColonies: [...colonyTypes.values()].filter((mask) => mask & (1 << GERM_TYPE)).length,
+      gametes: types[SEX_TYPE],
     });
     if (this.history.length > STATS_MAX) {
       // Thin older history by half so the chart spans the whole run.
@@ -1359,6 +1569,12 @@ function wrapDelta(d: number, w: number): number {
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+function popcount(m: number): number {
+  let c = 0;
+  for (; m; m &= m - 1) c++;
+  return c;
 }
 
 function clamp01(v: number): number {

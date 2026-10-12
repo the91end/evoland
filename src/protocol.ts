@@ -38,6 +38,8 @@ export interface Frame {
   /** Colony id per cell (the id of one member cell), and colony size. */
   colony: Uint32Array;
   colonySize: Int32Array;
+  /** Cell type per cell (index into CELL_TYPES). */
+  cellType: Uint8Array;
   /** Guests per cell, and each guest slot's tag colour (maxGuests * 3 per cell). */
   guests: Uint8Array;
   guestTag: Float32Array;
@@ -56,6 +58,9 @@ export interface Stats {
   swaps: number;
   captured: number;
   policed: number;
+  fragments: number;
+  germReleases: number;
+  fusions: number;
 }
 
 export interface CellDetail {
@@ -83,7 +88,16 @@ export interface CellDetail {
     sharing: number;
     policing: number;
     symbiont: number;
+    signal: number;
+    colonyLimit: number;
+    sex: number;
   };
+  cellType: number;
+  /** Switch states (0..1) and the outputs they set (-1..1, shared budget). */
+  switches: number[];
+  outputs: number[];
+  /** Ticks left to find a partner, for sex cells. */
+  gamete: number;
   bonds: number;
   colonySize: number;
   /** Shared energy given and received recently. */

@@ -27,6 +27,7 @@
           <option value="species">Species</option>
           <option value="feeding">Feeding mode</option>
           <option value="colony">Colony</option>
+          <option value="type">Cell type</option>
           <option value="energy">Energy</option>
         </select>
       </label>
@@ -56,6 +57,12 @@
         <h2>Colonies and partners</h2>
         <canvas id="colonyChart" height="110"></canvas>
         <div class="legend" id="colonyLegend"></div>
+      </section>
+      <section>
+        <h2>Cell types</h2>
+        <canvas id="typeChart" height="110"></canvas>
+        <div class="legend" id="typeLegend"></div>
+        <p class="muted small" id="multiTotals"></p>
       </section>
       <section>
         <details id="tune">

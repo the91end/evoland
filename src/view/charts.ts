@@ -113,6 +113,31 @@ export function drawColonies(canvas: HTMLCanvasElement, history: StatsSample[]):
   axes(g, w, h, maxY, hist[hist.length - 1].tick);
 }
 
+/** Stacked area of living cells by cell type. */
+export function drawTypes(canvas: HTMLCanvasElement, history: StatsSample[], colours: string[]): void {
+  const g = setup(canvas);
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  const hist = history.filter((s) => s.types !== undefined);
+  if (hist.length < 2) return;
+  const maxY = Math.max(1, ...hist.map((s) => s.cells)) * 1.05;
+  const x = (k: number) => (k / (hist.length - 1)) * w;
+  const y = (v: number) => h - (v / maxY) * h;
+  const base = new Float64Array(hist.length);
+  for (let t = 0; t < colours.length; t++) {
+    g.beginPath();
+    for (let k = 0; k < hist.length; k++) g.lineTo(x(k), y(base[k] + hist[k].types[t]));
+    for (let k = hist.length - 1; k >= 0; k--) g.lineTo(x(k), y(base[k]));
+    g.closePath();
+    g.fillStyle = colours[t];
+    g.globalAlpha = t === 0 ? 0.35 : 0.9;
+    g.fill();
+    for (let k = 0; k < hist.length; k++) base[k] += hist[k].types[t];
+  }
+  g.globalAlpha = 1;
+  axes(g, w, h, maxY, hist[hist.length - 1].tick);
+}
+
 /** Lines for cells by main feeding mode, plus debris. */
 export function drawFeeding(canvas: HTMLCanvasElement, history: StatsSample[]): void {
   const g = setup(canvas);

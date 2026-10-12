@@ -4,7 +4,7 @@
  * frames back. The page only draws.
  */
 import { World } from './sim/world';
-import { GENE_COUNT, traitsOf } from './sim/genome';
+import { GENE_COUNT, OUTPUTS, SWITCHES, traitsOf } from './sim/genome';
 import type { CellDetail, Frame, FromWorker, Stats, ToWorker } from './protocol';
 
 declare const self: DedicatedWorkerGlobalScope;
@@ -182,6 +182,7 @@ function sendFrame(): void {
     bonds,
     colony: Uint32Array.from(w.colony.subarray(0, n), (c) => w.id[c]),
     colonySize: w.colonySize.slice(0, n),
+    cellType: w.cellType.slice(0, n),
     guests,
     guestTag,
     maxGuests: mg,
@@ -203,6 +204,7 @@ function sendFrame(): void {
     bonds.buffer,
     frame.colony.buffer,
     frame.colonySize.buffer,
+    frame.cellType.buffer,
     guests.buffer,
     guestTag.buffer,
   ]);
@@ -220,6 +222,9 @@ function sendStats(): void {
     swaps: w.swaps,
     captured: w.captured,
     policed: w.policed,
+    fragments: w.fragments,
+    germReleases: w.germReleases,
+    fusions: w.fusions,
   };
   post(msg);
 }
@@ -274,6 +279,10 @@ function sendInspect(): void {
       gave: 0,
       got: 0,
       guests: [],
+      cellType: 0,
+      switches: [],
+      outputs: [],
+      gamete: 0,
     });
     return;
   }
@@ -298,6 +307,10 @@ function sendInspect(): void {
     colonySize: w.colonySize[i],
     gave: w.gaveTotal[i],
     got: w.gotTotal[i],
+    cellType: w.cellType[i],
+    switches: Array.from(w.sw.subarray(i * SWITCHES, (i + 1) * SWITCHES)),
+    outputs: Array.from(w.out.subarray(i * OUTPUTS, (i + 1) * OUTPUTS)),
+    gamete: w.gamete[i],
     guests: Array.from({ length: w.guestCount[i] }, (_, s) => {
       const g = i * w.mg + s;
       const t = traitsOf(w.guestGenes, g * GENE_COUNT);

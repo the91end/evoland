@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { Rng } from '../src/sim/rng';
-import { GENE_COUNT, Gene, mutate, swapGenes, traitsOf } from '../src/sim/genome';
+import {
+  GENE_COUNT,
+  Gene,
+  OUTPUTS,
+  SWITCHES,
+  SWITCH_BASE,
+  SWITCH_BLOCK,
+  mutate,
+  recombine,
+  runSwitches,
+  swapGenes,
+  traitsOf,
+} from '../src/sim/genome';
 import { World, sunAt } from '../src/sim/world';
 
 const SMALL = { startingCells: 120, cellCap: 1500 };
@@ -177,5 +189,37 @@ describe('colonies and partners', () => {
     const w = new World('guests', { ...SMALL, startTolerance: 0 });
     for (let t = 0; t < 600; t++) w.step();
     for (let i = 0; i < w.n; i++) expect(w.guestCount[i]).toBeLessThanOrEqual(w.mg);
+  });
+});
+
+describe('multicellular genes', () => {
+  it('keeps switch outputs inside the shared budget', () => {
+    const r = new Rng(3);
+    const g = new Float32Array(GENE_COUNT);
+    const state = new Float32Array(SWITCHES).fill(0.5);
+    const out = new Float32Array(OUTPUTS);
+    for (let t = 0; t < 50; t++) {
+      for (let k = 0; k < GENE_COUNT; k++) g[k] = r.next();
+      runSwitches(g, 0, [r.next(), r.next(), r.next(), r.next(), r.next(), 1], state, 0, out, 0);
+      expect(out.reduce((s, v) => s + Math.abs(v), 0)).toBeLessThanOrEqual(1 + 1e-6);
+    }
+  });
+
+  it('passes each switch on as one block during sex', () => {
+    const a = new Float32Array(GENE_COUNT).fill(0);
+    const b = new Float32Array(GENE_COUNT).fill(1);
+    const child = new Float32Array(GENE_COUNT);
+    recombine(child, 0, a, 0, b, 0, new Rng(9));
+    for (let s = 0; s < SWITCHES; s++) {
+      const block = child.subarray(SWITCH_BASE + s * SWITCH_BLOCK, SWITCH_BASE + (s + 1) * SWITCH_BLOCK);
+      expect(new Set(block).size).toBe(1);
+    }
+  });
+
+  it('runs with cell types counted in the stats', () => {
+    const w = new World('types', SMALL);
+    for (let t = 0; t < 100; t++) w.step();
+    const last = w.history[w.history.length - 1];
+    expect(last.types.reduce((s, v) => s + v, 0)).toBe(last.cells);
   });
 });

@@ -25,9 +25,30 @@ export const Gene = {
   Sharing: 16,
   Policing: 17,
   Symbiont: 18,
+  /** Phase 3: how strongly the signalling switch broadcasts to partners. */
+  Signal: 19,
+  /** Colony size past which cells start breaking bonds (fragmenting). */
+  ColonySize: 20,
+  /** Chance a released germ cell becomes a sex cell instead of a founder. */
+  Sex: 21,
 } as const;
 
-export const GENE_COUNT = 19;
+/**
+ * The gene switch network. Each of the 4 switches reads 7 inputs (bond
+ * count, partners' signal, energy, light, age, a constant, its own last
+ * state) and pushes 6 outputs. A switch's 13 weights sit together so sex
+ * passes them on as one block.
+ */
+export const SWITCHES = 4;
+export const SWITCH_INPUTS = 7;
+export const OUTPUTS = 6;
+export const SWITCH_BLOCK = SWITCH_INPUTS + OUTPUTS;
+export const SWITCH_BASE = 22;
+export const GENE_COUNT = SWITCH_BASE + SWITCHES * SWITCH_BLOCK;
+
+/** What the switch outputs change, in output order. */
+export const Output = { Feed: 0, Swim: 1, Adhere: 2, Defend: 3, Divide: 4, Germ: 5 } as const;
+export const OUTPUT_NAMES = ['feeding', 'swimming', 'adhesion', 'defence', 'dividing', 'germ'];
 
 export const GENE_NAMES: string[] = [
   'Size',
@@ -49,6 +70,16 @@ export const GENE_NAMES: string[] = [
   'Sharing',
   'Policing',
   'Symbiont keeping',
+  'Signal strength',
+  'Colony size limit',
+  'Sex',
+  ...Array.from({ length: SWITCHES * SWITCH_BLOCK }, (_, k) => {
+    const sw = Math.floor(k / SWITCH_BLOCK) + 1;
+    const w = k % SWITCH_BLOCK;
+    return w < SWITCH_INPUTS
+      ? `Switch ${sw} ← ${['bonds', 'signal', 'energy', 'light', 'age', 'bias', 'self'][w]}`
+      : `Switch ${sw} → ${OUTPUT_NAMES[w - SWITCH_INPUTS]}`;
+  }),
 ];
 
 /** Traits derived once from a genome when a cell is born. */
@@ -67,6 +98,10 @@ export interface Traits {
   sharing: number;
   policing: number;
   symbiont: number;
+  signal: number;
+  /** Colony size past which bonds start to break. */
+  colonyLimit: number;
+  sex: number;
 }
 
 export function radiusOf(g: ArrayLike<number>, o: number): number {
@@ -92,7 +127,87 @@ export function traitsOf(g: ArrayLike<number>, o = 0): Traits {
     sharing: g[o + Gene.Sharing],
     policing: g[o + Gene.Policing],
     symbiont: g[o + Gene.Symbiont],
+    signal: g[o + Gene.Signal],
+    colonyLimit: colonyLimitOf(g[o + Gene.ColonySize]),
+    sex: g[o + Gene.Sex],
   };
+}
+
+/** Colony size limit from its gene: 2 to 64 cells. */
+export function colonyLimitOf(g: number): number {
+  return Math.round(2 + 62 * g * g);
+}
+
+/**
+ * Runs one cell's switch network. Reads `inputs` (the first 6 switch
+ * inputs; the 7th is each switch's own state), updates `state[so..so+4)`
+ * in place and writes the 6 outputs to `out[oo..oo+6)`. Outputs share a
+ * fixed budget: their sizes never add up to more than 1, so a cell that
+ * boosts one thing has less to give everything else.
+ */
+export function runSwitches(
+  g: ArrayLike<number>,
+  o: number,
+  inputs: ArrayLike<number>,
+  state: Float32Array,
+  so: number,
+  out: Float32Array,
+  oo: number,
+): void {
+  for (let s = 0; s < SWITCHES; s++) {
+    const b = o + SWITCH_BASE + s * SWITCH_BLOCK;
+    let sum = (2 * g[b + 6] - 1) * state[so + s];
+    for (let k = 0; k < 6; k++) sum += (2 * g[b + k] - 1) * inputs[k];
+    state[so + s] = 1 / (1 + Math.exp(-4 * sum));
+  }
+  let total = 0;
+  for (let k = 0; k < OUTPUTS; k++) {
+    let v = 0;
+    for (let s = 0; s < SWITCHES; s++) v += (2 * g[o + SWITCH_BASE + s * SWITCH_BLOCK + SWITCH_INPUTS + k] - 1) * state[so + s];
+    out[oo + k] = v;
+    total += Math.abs(v);
+  }
+  if (total > 1) for (let k = 0; k < OUTPUTS; k++) out[oo + k] /= total;
+}
+
+/**
+ * A cell's type from its outputs: the output it boosts most, or plain
+ * when nothing stands out. Sex cells are their own type.
+ */
+export const CELL_TYPES = ['plain', 'feeder', 'swimmer', 'sticky', 'defender', 'divider', 'germ', 'sex cell'];
+export const TYPE_THRESHOLD = 0.25;
+
+export function cellTypeOf(out: ArrayLike<number>, oo: number): number {
+  let best = -1;
+  let bestV = TYPE_THRESHOLD;
+  for (let k = 0; k < OUTPUTS; k++) {
+    if (out[oo + k] > bestV) {
+      bestV = out[oo + k];
+      best = k;
+    }
+  }
+  return best + 1;
+}
+
+/**
+ * Sex: each gene comes from either parent, except that each switch's
+ * weights travel together so a working switch is not torn apart.
+ */
+export function recombine(
+  child: Float32Array,
+  co: number,
+  a: Float32Array,
+  ao: number,
+  b: Float32Array,
+  bo: number,
+  rng: Rng,
+): void {
+  for (let k = 0; k < SWITCH_BASE; k++) child[co + k] = rng.next() < 0.5 ? a[ao + k] : b[bo + k];
+  for (let s = 0; s < SWITCHES; s++) {
+    const [src, so] = rng.next() < 0.5 ? [a, ao] : [b, bo];
+    const off = SWITCH_BASE + s * SWITCH_BLOCK;
+    for (let k = off; k < off + SWITCH_BLOCK; k++) child[co + k] = src[so + k];
+  }
 }
 
 /**

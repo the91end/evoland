@@ -71,6 +71,14 @@ export interface Params {
   /** Host upkeep per guest per tick, times guest radius squared. */
   kGuest: number;
 
+  // Multicellular life
+  /** Chance per tick that a cell in an over-size colony breaks its weakest bond. */
+  fragmentRate: number;
+  /** Energy fraction at which a germ cell leaves its colony. */
+  germEnergy: number;
+  /** Ticks a sex cell lives while it looks for a partner. */
+  gameteLife: number;
+
   // Life cycle
   divisionLoss: number;
   divisionCooldown: number;
@@ -117,6 +125,10 @@ export const DEFAULT_PARAMS: Params = {
   maxGuests: 4,
   guestPass: 0.5,
   kGuest: 0.001,
+
+  fragmentRate: 0.01,
+  germEnergy: 0.7,
+  gameteLife: 500,
 
   divisionLoss: 0.1,
   divisionCooldown: 60,

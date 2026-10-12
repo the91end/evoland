@@ -4,7 +4,10 @@ import type { Params } from '../sim/params';
 import { currentAt } from '../sim/world';
 import type { Frame } from '../protocol';
 
-export type ColourMode = 'tag' | 'species' | 'feeding' | 'energy' | 'colony';
+export type ColourMode = 'tag' | 'species' | 'feeding' | 'energy' | 'colony' | 'type';
+
+/** Cell type colours, in CELL_TYPES order. */
+export const TYPE_COLOURS = ['#6f8794', '#e8d94a', '#5fb8ff', '#5fd3c6', '#ff7a5c', '#b06cf0', '#ffffff', '#ff5fc8'];
 
 const DRIFT_PARTICLES = 1600;
 const FEED_COLOURS = [new THREE.Color('#e8d94a'), new THREE.Color('#f0703a'), new THREE.Color('#b06cf0')];
@@ -431,6 +434,9 @@ export class Pond {
       case 'colony':
         if (f.colonySize[i] < 2) this.c.setRGB(0.35, 0.42, 0.46);
         else this.c.setHSL((f.colony[i] * 0.61803) % 1, 0.7, 0.55);
+        break;
+      case 'type':
+        this.c.set(TYPE_COLOURS[f.cellType[i]]);
         break;
       case 'energy':
         this.c.setHSL(0.55 - 0.45 * f.energy[i], 0.8, 0.25 + 0.4 * f.energy[i]);

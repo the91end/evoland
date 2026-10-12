@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import './style.css';
-import { Pond, type ColourMode } from './view/pond';
-import { COLONY_SERIES, drawColonies, drawFeeding, drawPopulation } from './view/charts';
+import { Pond, TYPE_COLOURS, type ColourMode } from './view/pond';
+import { COLONY_SERIES, drawColonies, drawFeeding, drawPopulation, drawTypes } from './view/charts';
 import { DEFAULT_PARAMS, type Params } from './sim/params';
-import { GENE_NAMES } from './sim/genome';
+import { CELL_TYPES, GENE_NAMES, OUTPUT_NAMES } from './sim/genome';
 import type { SpeciesInfo } from './sim/species';
 import type { CellDetail, FromWorker, Stats, ToWorker } from './protocol';
 import SimWorker from './sim.worker.ts?worker&inline';
@@ -151,11 +151,22 @@ $('colonyLegend').innerHTML = COLONY_SERIES.map(
   ([, label, col]) => `<span><i style="background:${col}"></i>${label}</span>`,
 ).join('');
 
+$('typeLegend').innerHTML = CELL_TYPES.map(
+  (label, k) => `<span><i style="background:${TYPE_COLOURS[k]}"></i>${label}</span>`,
+).join('');
+
 function drawSide(): void {
   if (!stats || $('side').classList.contains('closed')) return;
   drawPopulation($('popChart'), stats.history, stats.species, speciesCss);
   drawFeeding($('feedChart'), stats.history);
   drawColonies($('colonyChart'), stats.history);
+  drawTypes($('typeChart'), stats.history, TYPE_COLOURS);
+  const last = stats.history[stats.history.length - 1];
+  if (last?.types)
+    $('multiTotals').textContent =
+      `${last.typesPerColony.toFixed(1)} cell types per colony · ${last.germColonies} colonies with a germ cell · ` +
+      `${stats.fragments.toLocaleString()} colonies split · ${stats.germReleases.toLocaleString()} germ cells released · ` +
+      `${stats.fusions.toLocaleString()} sex cell fusions`;
 
   const alive = stats.species.filter((s) => s.count > 0);
   const big = alive.filter((s) => s.count >= 10).length;
@@ -263,6 +274,10 @@ function showInspector(d: CellDetail): void {
         ['Sharing', t.sharing.toFixed(2)],
         ['Policing', t.policing.toFixed(2)],
         ['Symbiont keeping', t.symbiont.toFixed(2)],
+        ['Cell type', CELL_TYPES[d.cellType] + (d.gamete ? ` (${d.gamete} ticks to find a partner)` : '')],
+        ['Switches', d.switches.map((v) => v.toFixed(2)).join(' · ')],
+        ...d.outputs.map((v, k): [string, string] => [`Output: ${OUTPUT_NAMES[k]}`, `${v >= 0 ? '+' : ''}${v.toFixed(2)}`]),
+        ['Signal / colony limit / sex', `${t.signal.toFixed(2)} / ${t.colonyLimit} cells / ${t.sex.toFixed(2)}`],
         ['Bonds', `${d.bonds} (colony of ${d.colonySize})`],
         ['Shared lately: gave / got', `${d.gave.toFixed(1)} / ${d.got.toFixed(1)}`],
         ['Height above floor', d.pos[1].toFixed(0)],
@@ -329,6 +344,9 @@ const LIVE: [keyof Params, string, number, number][] = [
   ['policingWindow', 'Policing window (ticks)', 20, 1000],
   ['guestPass', 'Guest pays host', 0, 1],
   ['kGuest', 'Guest upkeep', 0, 0.01],
+  ['fragmentRate', 'Over-size colony split chance', 0, 0.1],
+  ['germEnergy', 'Germ cell leaves at energy', 0.3, 1],
+  ['gameteLife', 'Sex cell lifetime (ticks)', 50, 3000],
 ];
 
 /** Parameters that shape the pond itself, applied on restart. */
