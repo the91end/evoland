@@ -243,6 +243,28 @@ canvas.addEventListener('pointerup', (e) => {
 });
 $('inspClose').addEventListener('click', closeInspector);
 
+/** Follows the biggest colony with 2+ cell types, or else the biggest colony. */
+$('biggestBtn').addEventListener('click', () => {
+  const f = pond.latest;
+  if (!f) return;
+  let best = -1;
+  let bestScore = 1;
+  for (let i = 0; i < f.n; i++) {
+    const score = f.colonySize[i] + (f.colonyTypes[i] >= 2 ? 1e6 : 0);
+    if (score > bestScore) {
+      bestScore = score;
+      best = i;
+    }
+  }
+  if (best < 0) {
+    $('biggestBtn').textContent = 'No colonies yet';
+    setTimeout(() => ($('biggestBtn').textContent = 'Follow biggest'), 1500);
+    return;
+  }
+  pond.followId = f.ids[best];
+  send({ type: 'inspect', id: f.ids[best] });
+});
+
 function closeInspector(): void {
   pond.followId = null;
   $('inspector').hidden = true;

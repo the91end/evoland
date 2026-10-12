@@ -143,6 +143,17 @@ function sendFrame(): void {
     feed[i * 3 + 2] = w.shareE[i];
     energy[i] = w.energy[i] / w.maxE[i];
   }
+  // Distinct cell types per colony of 3+ cells, as a bit mask per colony root.
+  const masks = new Map<number, number>();
+  for (let i = 0; i < n; i++)
+    if (w.colonySize[i] >= 3) masks.set(w.colony[i], (masks.get(w.colony[i]) ?? 0) | (1 << w.cellType[i]));
+  const colonyTypes = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    let m = masks.get(w.colony[i]) ?? 0;
+    let c = 0;
+    for (; m; m &= m - 1) c++;
+    colonyTypes[i] = c;
+  }
   const bondList: number[] = [];
   for (let i = 0; i < n; i++)
     for (let s = 0; s < w.bondCount[i]; s++) {
@@ -183,6 +194,7 @@ function sendFrame(): void {
     colony: Uint32Array.from(w.colony.subarray(0, n), (c) => w.id[c]),
     colonySize: w.colonySize.slice(0, n),
     cellType: w.cellType.slice(0, n),
+    colonyTypes,
     guests,
     guestTag,
     maxGuests: mg,
@@ -205,6 +217,7 @@ function sendFrame(): void {
     frame.colony.buffer,
     frame.colonySize.buffer,
     frame.cellType.buffer,
+    colonyTypes.buffer,
     guests.buffer,
     guestTag.buffer,
   ]);

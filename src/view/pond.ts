@@ -4,7 +4,7 @@ import type { Params } from '../sim/params';
 import { currentAt } from '../sim/world';
 import type { Frame } from '../protocol';
 
-export type ColourMode = 'tag' | 'species' | 'feeding' | 'energy' | 'colony' | 'type';
+export type ColourMode = 'tag' | 'species' | 'feeding' | 'energy' | 'colony' | 'type' | 'multi';
 
 /** Cell type colours, in CELL_TYPES order. */
 export const TYPE_COLOURS = ['#6f8794', '#e8d94a', '#5fb8ff', '#5fd3c6', '#ff7a5c', '#b06cf0', '#ffffff', '#ff5fc8'];
@@ -247,6 +247,11 @@ export class Pond {
     this.renderer.setSize(container.clientWidth, container.clientHeight);
   }
 
+  /** The newest frame received from the worker. */
+  get latest(): Frame | null {
+    return this.curr;
+  }
+
   pushFrame(f: Frame): void {
     this.prev = this.curr;
     this.prevAt = this.currAt;
@@ -437,6 +442,11 @@ export class Pond {
         break;
       case 'type':
         this.c.set(TYPE_COLOURS[f.cellType[i]]);
+        break;
+      case 'multi':
+        // Only colonies with 2+ cell types light up, coloured by cell type.
+        if (f.colonyTypes[i] >= 2) this.c.set(TYPE_COLOURS[f.cellType[i]]);
+        else this.c.setRGB(0.16, 0.2, 0.23);
         break;
       case 'energy':
         this.c.setHSL(0.55 - 0.45 * f.energy[i], 0.8, 0.25 + 0.4 * f.energy[i]);

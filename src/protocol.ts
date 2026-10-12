@@ -40,6 +40,8 @@ export interface Frame {
   colonySize: Int32Array;
   /** Cell type per cell (index into CELL_TYPES). */
   cellType: Uint8Array;
+  /** Distinct cell types in each cell's colony (0 for colonies under 3 cells). */
+  colonyTypes: Uint8Array;
   /** Guests per cell, and each guest slot's tag colour (maxGuests * 3 per cell). */
   guests: Uint8Array;
   guestTag: Float32Array;
