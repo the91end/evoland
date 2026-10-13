@@ -60,7 +60,6 @@ export interface Stats {
   swaps: number;
   captured: number;
   policed: number;
-  fragments: number;
   germReleases: number;
   fusions: number;
 }
@@ -102,6 +101,8 @@ export interface CellDetail {
     signal: number;
     colonyLimit: number;
     sex: number;
+    divUp: number;
+    divSpread: number;
   };
   cellType: number;
   /** Switch states (0..1) and the outputs they set (-1..1, shared budget). */
@@ -109,6 +110,8 @@ export interface CellDetail {
   outputs: number[];
   /** Ticks left to find a partner, for sex cells. */
   gamete: number;
+  /** Divisions since the egg or germ cell that started this cell's body. */
+  stage: number;
   /** The whole organism (bonded group) this cell belongs to, when it has 2+ cells. */
   organism: OrganismDetail | null;
   bonds: number;

@@ -166,7 +166,7 @@ function drawSide(): void {
   if (last?.types)
     $('multiTotals').textContent =
       `${last.typesPerColony.toFixed(1)} cell types per colony · ${last.germColonies} colonies with a germ cell · ` +
-      `${stats.fragments.toLocaleString()} colonies split · ${stats.germReleases.toLocaleString()} germ cells released · ` +
+      `${stats.germReleases.toLocaleString()} germ cells released · ` +
       `${stats.fusions.toLocaleString()} sex cell fusions`;
 
   const alive = stats.species.filter((s) => s.count > 0);
@@ -300,7 +300,13 @@ function showInspector(d: CellDetail): void {
         ['Cell type', CELL_TYPES[d.cellType] + (d.gamete ? ` (${d.gamete} ticks to find a partner)` : '')],
         ['Switches', d.switches.map((v) => v.toFixed(2)).join(' · ')],
         ...d.outputs.map((v, k): [string, string] => [`Output: ${OUTPUT_NAMES[k]}`, `${v >= 0 ? '+' : ''}${v.toFixed(2)}`]),
-        ['Signal / colony limit / sex', `${t.signal.toFixed(2)} / ${t.colonyLimit} cells / ${t.sex.toFixed(2)}`],
+        ['Signal / sex', `${t.signal.toFixed(2)} / ${t.sex.toFixed(2)}`],
+        ['Body plan: adult size', `${t.colonyLimit} cells`],
+        [
+          'Body plan: growth',
+          `${t.divUp >= 0.5 ? 'upward' : 'downward'}, ${t.divSpread < 0.35 ? 'in a line' : t.divSpread > 0.65 ? 'as a ball' : 'loosely'}`,
+        ],
+        ['Stage', `${d.stage} division${d.stage === 1 ? '' : 's'} from the egg`],
         ['Bonds', `${d.bonds} (colony of ${d.colonySize})`],
         ['Shared lately: gave / got', `${d.gave.toFixed(1)} / ${d.got.toFixed(1)}`],
         ['Height above floor', d.pos[1].toFixed(0)],
@@ -402,7 +408,6 @@ const LIVE: [keyof Params, string, number, number][] = [
   ['policingWindow', 'Policing window (ticks)', 20, 1000],
   ['guestPass', 'Guest pays host', 0, 1],
   ['kGuest', 'Guest upkeep', 0, 0.01],
-  ['fragmentRate', 'Over-size colony split chance', 0, 0.1],
   ['germEnergy', 'Germ cell leaves at energy', 0.3, 1],
   ['gameteLife', 'Sex cell lifetime (ticks)', 50, 3000],
 ];

@@ -238,7 +238,6 @@ function sendStats(): void {
     swaps: w.swaps,
     captured: w.captured,
     policed: w.policed,
-    fragments: w.fragments,
     germReleases: w.germReleases,
     fusions: w.fusions,
   };
@@ -299,6 +298,7 @@ function sendInspect(): void {
       switches: [],
       outputs: [],
       gamete: 0,
+      stage: 0,
       organism: null,
     });
     return;
@@ -328,6 +328,7 @@ function sendInspect(): void {
     switches: Array.from(w.sw.subarray(i * SWITCHES, (i + 1) * SWITCHES)),
     outputs: Array.from(w.out.subarray(i * OUTPUTS, (i + 1) * OUTPUTS)),
     gamete: w.gamete[i],
+    stage: w.stage[i],
     organism: organismOf(w, i),
     guests: Array.from({ length: w.guestCount[i] }, (_, s) => {
       const g = i * w.mg + s;

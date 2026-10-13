@@ -27,27 +27,37 @@ export const Gene = {
   Symbiont: 18,
   /** Phase 3: how strongly the signalling switch broadcasts to partners. */
   Signal: 19,
-  /** Colony size past which cells start breaking bonds (fragmenting). */
+  /** Adult body size: cells in an organism this big stop dividing. */
   ColonySize: 20,
   /** Chance a released germ cell becomes a sex cell instead of a founder. */
   Sex: 21,
+  /** Body axis: daughters are placed above (1) or below (0) their mother. */
+  DivUp: 22,
+  /** How loosely daughters follow the body axis: 0 builds a line, 1 a ball. */
+  DivSpread: 23,
 } as const;
 
 /**
- * The gene switch network. Each of the 4 switches reads 7 inputs (bond
- * count, partners' signal, energy, light, age, a constant, its own last
- * state) and pushes 6 outputs. A switch's 13 weights sit together so sex
+ * The gene switch network. Each of the 4 switches reads 9 inputs (bond
+ * count, partners' signal, energy, light, age, a constant, developmental
+ * stage, height within the body, its own last state) and pushes 6 outputs.
+ * Stage and height are what let a body plan unfold the same way each
+ * generation: a cell knows how many divisions it is from the egg and
+ * whether it sits at the top or bottom of the body. A switch's 13 weights sit together so sex
  * passes them on as one block.
  */
 export const SWITCHES = 4;
-export const SWITCH_INPUTS = 7;
+export const SWITCH_INPUTS = 9;
 export const OUTPUTS = 6;
 export const SWITCH_BLOCK = SWITCH_INPUTS + OUTPUTS;
-export const SWITCH_BASE = 22;
+export const SWITCH_BASE = 24;
+/** Switch states of a fresh egg or founding germ cell. */
+export const EGG_STATE = 0.5;
 export const GENE_COUNT = SWITCH_BASE + SWITCHES * SWITCH_BLOCK;
 
 /** What the switch outputs change, in output order. */
 export const Output = { Feed: 0, Swim: 1, Adhere: 2, Defend: 3, Divide: 4, Germ: 5 } as const;
+export const INPUT_NAMES = ['bonds', 'signal', 'energy', 'light', 'age', 'bias', 'stage', 'height', 'self'];
 export const OUTPUT_NAMES = ['feeding', 'swimming', 'adhesion', 'defence', 'dividing', 'germ'];
 
 export const GENE_NAMES: string[] = [
@@ -73,11 +83,13 @@ export const GENE_NAMES: string[] = [
   'Signal strength',
   'Colony size limit',
   'Sex',
+  'Body axis (daughters up)',
+  'Body spread (ball vs line)',
   ...Array.from({ length: SWITCHES * SWITCH_BLOCK }, (_, k) => {
     const sw = Math.floor(k / SWITCH_BLOCK) + 1;
     const w = k % SWITCH_BLOCK;
     return w < SWITCH_INPUTS
-      ? `Switch ${sw} ← ${['bonds', 'signal', 'energy', 'light', 'age', 'bias', 'self'][w]}`
+      ? `Switch ${sw} ← ${INPUT_NAMES[w]}`
       : `Switch ${sw} → ${OUTPUT_NAMES[w - SWITCH_INPUTS]}`;
   }),
 ];
@@ -99,9 +111,11 @@ export interface Traits {
   policing: number;
   symbiont: number;
   signal: number;
-  /** Colony size past which bonds start to break. */
+  /** Adult body size in cells. */
   colonyLimit: number;
   sex: number;
+  divUp: number;
+  divSpread: number;
 }
 
 export function radiusOf(g: ArrayLike<number>, o: number): number {
@@ -130,6 +144,8 @@ export function traitsOf(g: ArrayLike<number>, o = 0): Traits {
     signal: g[o + Gene.Signal],
     colonyLimit: colonyLimitOf(g[o + Gene.ColonySize]),
     sex: g[o + Gene.Sex],
+    divUp: g[o + Gene.DivUp],
+    divSpread: g[o + Gene.DivSpread],
   };
 }
 
@@ -139,8 +155,8 @@ export function colonyLimitOf(g: number): number {
 }
 
 /**
- * Runs one cell's switch network. Reads `inputs` (the first 6 switch
- * inputs; the 7th is each switch's own state), updates `state[so..so+4)`
+ * Runs one cell's switch network. Reads `inputs` (the first 8 switch
+ * inputs; the 9th is each switch's own state), updates `state[so..so+4)`
  * in place and writes the 6 outputs to `out[oo..oo+6)`. Outputs share a
  * fixed budget: their sizes never add up to more than 1, so a cell that
  * boosts one thing has less to give everything else.
@@ -156,8 +172,8 @@ export function runSwitches(
 ): void {
   for (let s = 0; s < SWITCHES; s++) {
     const b = o + SWITCH_BASE + s * SWITCH_BLOCK;
-    let sum = (2 * g[b + 6] - 1) * state[so + s];
-    for (let k = 0; k < 6; k++) sum += (2 * g[b + k] - 1) * inputs[k];
+    let sum = (2 * g[b + 8] - 1) * state[so + s];
+    for (let k = 0; k < 8; k++) sum += (2 * g[b + k] - 1) * inputs[k];
     state[so + s] = 1 / (1 + Math.exp(-4 * sum));
   }
   let total = 0;

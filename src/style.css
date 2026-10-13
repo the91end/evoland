@@ -344,3 +344,15 @@ dialog menu {
     display: none;
   }
 }
+
+/* Fixed-width digits so the top bar doesn't shift as the clock ticks. */
+#clock,
+#rate {
+  font-variant-numeric: tabular-nums;
+}
+#clock {
+  min-width: 17em;
+}
+#rate {
+  min-width: 6.5em;
+}

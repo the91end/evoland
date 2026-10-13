@@ -200,7 +200,7 @@ describe('multicellular genes', () => {
     const out = new Float32Array(OUTPUTS);
     for (let t = 0; t < 50; t++) {
       for (let k = 0; k < GENE_COUNT; k++) g[k] = r.next();
-      runSwitches(g, 0, [r.next(), r.next(), r.next(), r.next(), r.next(), 1], state, 0, out, 0);
+      runSwitches(g, 0, [r.next(), r.next(), r.next(), r.next(), r.next(), 1, r.next(), 2 * r.next() - 1], state, 0, out, 0);
       expect(out.reduce((s, v) => s + Math.abs(v), 0)).toBeLessThanOrEqual(1 + 1e-6);
     }
   });
@@ -221,5 +221,29 @@ describe('multicellular genes', () => {
     for (let t = 0; t < 100; t++) w.step();
     const last = w.history[w.history.length - 1];
     expect(last.types.reduce((s, v) => s + v, 0)).toBe(last.cells);
+  });
+});
+
+describe('development', () => {
+  it('starts a body from the egg state and stops growing at adult size', () => {
+    const w = new World('dev', { startingCells: 1, cellCap: 300, mutationStep: 0 });
+    const g = w.genes;
+    // A sticky cell whose body plan says "grow to 4 cells".
+    g[Gene.Adhesion] = 1;
+    g[Gene.ColonySize] = Math.sqrt(2 / 62);
+    w.refreshTraitsFor(0);
+    w.energy[0] = w.maxE[0];
+    w.age[0] = 0;
+    w.lifespan[0] = 1e6;
+    for (let t = 0; t < 600 && w.n > 0; t++) {
+      for (let i = 0; i < w.n; i++) {
+        w.energy[i] = w.maxE[i];
+        w.lifespan[i] = 1e6;
+      }
+      w.step();
+    }
+    w.findColonies();
+    expect(Math.max(...w.colonySize.subarray(0, w.n))).toBeLessThanOrEqual(4);
+    expect(w.stage[0]).toBeGreaterThan(0);
   });
 });
