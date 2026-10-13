@@ -14,6 +14,10 @@ const ORGANISM_MAX = 256;
 declare const self: DedicatedWorkerGlobalScope;
 
 const FRAME_MS = 16;
+/** At high speed, draw less often and give the simulation longer turns. */
+const FAST_SPEED = 10;
+const FAST_FRAME_MS = 80;
+const FAST_BUDGET_MS = 120;
 const STATS_MS = 500;
 const INSPECT_MS = 200;
 /** Never spend longer than this per loop turn, so messages stay responsive. */
@@ -119,7 +123,9 @@ function loop(): void {
 
   const start = performance.now();
   let ran = 0;
-  while (owed >= 1 && performance.now() - start < BUDGET_MS) {
+  const fast = speed >= FAST_SPEED;
+  const budget = fast ? FAST_BUDGET_MS : BUDGET_MS;
+  while (owed >= 1 && performance.now() - start < budget) {
     w.step();
     owed -= 1;
     ran++;
@@ -131,7 +137,7 @@ function loop(): void {
     rateTicks = 0;
     rateStart = t;
   }
-  if (ran > 0 && t - lastFrame >= FRAME_MS) sendFrame();
+  if (ran > 0 && t - lastFrame >= (fast ? FAST_FRAME_MS : FRAME_MS)) sendFrame();
   if (t - lastStats >= STATS_MS) sendStats();
   if (inspectId !== null && t - lastInspect >= INSPECT_MS) sendInspect();
 

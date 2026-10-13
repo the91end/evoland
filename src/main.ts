@@ -179,7 +179,7 @@ function start(): void {
 
 const speedInput = $<HTMLInputElement>('speed');
 const SPEED_MIN = 0.25;
-const SPEED_MAX = 20;
+const SPEED_MAX = 1000;
 const speedFromSlider = (v: number) => SPEED_MIN * Math.pow(SPEED_MAX / SPEED_MIN, v / 100);
 speedInput.value = String((100 * Math.log(1 / SPEED_MIN)) / Math.log(SPEED_MAX / SPEED_MIN));
 function currentSpeed(): number {
@@ -220,7 +220,13 @@ function updateClock(tick: number, sun: number, rate: number, n: number): void {
   const day = Math.floor(tick / params.dayLength) + 1;
   const phase = sun > 0 ? 'day' : 'night';
   $('clock').textContent = `Day ${day}, ${phase} · tick ${tick} · ${n} cells`;
-  $('rate').textContent = rate ? `${Math.round(rate)} ticks/s` : '';
+  // Above what the computer can keep up with, show the speed actually reached.
+  const actual = rate / params.ticksPerSecond;
+  const behind = !paused && rate > 0 && actual < currentSpeed() * 0.8;
+  $('rate').textContent = rate
+    ? `${Math.round(rate)} ticks/s` + (behind ? ` (≈${actual < 10 ? actual.toFixed(1) : Math.round(actual)}× max)` : '')
+    : '';
+  $('rate').title = behind ? 'The simulation is running as fast as this computer allows.' : '';
 }
 
 window.addEventListener('keydown', (e) => {
