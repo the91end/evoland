@@ -6,6 +6,9 @@ import type { BodyFrame, Frame } from '../protocol';
 
 export type ColourMode = 'tag' | 'species' | 'feeding' | 'energy' | 'colony' | 'type' | 'multi';
 
+/** Motility at which a cell counts as having a flagellum. */
+export const FLAGELLUM_MIN = 0.1;
+
 /** Most organism members outlined around a followed cell. */
 const MAX_MEMBERS = 512;
 /** Most tissue parts drawn for big organisms. */
@@ -393,16 +396,22 @@ export class Pond {
         this.guests.setColorAt(guestN++, this.c);
       }
 
-      // Tail behind motile, moving cells.
+      // Flagellum: trails behind a swimming cell, hangs in a fixed direction at rest.
       const vx = f.vel[i * 3],
         vy = f.vel[i * 3 + 1],
         vz = f.vel[i * 3 + 2];
       const sp = Math.hypot(vx, vy, vz);
-      if (f.motility[i] > 0.25 && sp > 0.15) {
-        this.v.set(-vx / sp, -vy / sp, -vz / sp);
+      const mot = f.motility[i];
+      if (mot >= FLAGELLUM_MIN) {
+        if (sp > 0.15) this.v.set(-vx / sp, -vy / sp, -vz / sp);
+        else {
+          const h = f.ids[i] * 2.399;
+          this.v.set(Math.cos(h) * 0.6, -0.6, Math.sin(h) * 0.6).normalize();
+        }
         this.q.setFromUnitVectors(this.up, this.v);
-        const len = r * (0.8 + 1.6 * f.motility[i]);
-        this.s.set(r * 0.45, len, r * 0.45);
+        const len = r * (0.6 + 1.8 * mot);
+        const w = r * (0.15 + 0.3 * mot);
+        this.s.set(w, len, w);
         this.v.multiplyScalar(r * 0.6).add(this.tailPos.set(x, y, z));
         this.m.compose(this.v, this.q, this.s);
         this.tails.setMatrixAt(tails++, this.m);

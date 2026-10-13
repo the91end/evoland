@@ -1,4 +1,5 @@
 import type { OrganismDetail } from '../protocol';
+import { FLAGELLUM_MIN } from './pond';
 
 /** Remembered 2D layout per cell id, so the drawing stays steady between updates. */
 const layout = new Map<number, { x: number; y: number }>();
@@ -91,6 +92,32 @@ export function drawOrganism(canvas: HTMLCanvasElement, org: OrganismDetail, col
   }
   g.stroke();
   hit = [];
+  // Flagella first, pointing away from the body's middle, so cells sit on top.
+  const mx = pos.reduce((s, p) => s + p.x, 0) / n;
+  const my = pos.reduce((s, p) => s + p.y, 0) / n;
+  g.strokeStyle = 'rgba(207,233,242,0.85)';
+  g.lineCap = 'round';
+  cells.forEach((c, k) => {
+    if (c.motility < FLAGELLUM_MIN) return;
+    const r = dot * (0.6 + 0.4 * (c.radius / 4));
+    let dx = pos[k].x - mx;
+    let dy = pos[k].y - my;
+    const d = Math.hypot(dx, dy);
+    if (d < 1e-3) [dx, dy] = [0, 1];
+    else [dx, dy] = [dx / d, dy / d];
+    const len = r * (1.2 + 2.5 * c.motility);
+    g.lineWidth = 1 + 1.5 * c.motility;
+    g.beginPath();
+    g.moveTo(sx(k) + dx * r, sy(k) + dy * r);
+    // A gentle wave so it reads as a flagellum, not a stick.
+    g.quadraticCurveTo(
+      sx(k) + dx * (r + len * 0.5) - dy * len * 0.25,
+      sy(k) + dy * (r + len * 0.5) + dx * len * 0.25,
+      sx(k) + dx * (r + len),
+      sy(k) + dy * (r + len),
+    );
+    g.stroke();
+  });
   cells.forEach((c, k) => {
     const r = dot * (0.6 + 0.4 * (c.radius / 4));
     g.globalAlpha = 0.45 + 0.55 * c.energy;

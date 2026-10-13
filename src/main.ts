@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import './style.css';
-import { Pond, TYPE_COLOURS, type ColourMode } from './view/pond';
+import { FLAGELLUM_MIN, Pond, TYPE_COLOURS, type ColourMode } from './view/pond';
 import { drawOrganism, organismCellAt } from './view/organism';
 import { COLONY_SERIES, drawColonies, drawFeeding, drawPopulation, drawTypes } from './view/charts';
 import { DEFAULT_PARAMS, type Params } from './sim/params';
@@ -285,6 +285,14 @@ function closeInspector(): void {
   send({ type: 'inspect', id: null });
 }
 
+/** "none", or its size and what it costs per tick. */
+function flagellumText(motility: number, radius: number): string {
+  if (motility < FLAGELLUM_MIN) return `none (motility ${motility.toFixed(2)})`;
+  const size = motility < 0.4 ? 'short' : motility < 0.7 ? 'medium' : 'long';
+  const upkeep = params.kFlagellum * motility * radius * radius;
+  return `${size} (motility ${motility.toFixed(2)}, upkeep ${upkeep.toFixed(4)}/tick)`;
+}
+
 function showBodyInspector(d: BodyDetail): void {
   if (pond.followId !== d.id) return;
   $('inspector').hidden = false;
@@ -313,6 +321,7 @@ function showBodyInspector(d: BodyDetail): void {
     ['Grows to', `${d.adult.toLocaleString()} cells`],
     ['Body radius', d.radius.toFixed(1)],
     ['Feeding L / V / E', `${pct(t.light)} / ${pct(t.vent)} / ${pct(t.engulf)}`],
+    ['Flagella', flagellumText(t.motility, t.radius)],
     ['Germ cells', String(d.tissue[CELL_TYPES.indexOf('germ')])],
     ['Sex', t.sex.toFixed(2)],
   ];
@@ -341,7 +350,7 @@ function showInspector(d: CellDetail): void {
         ['Energy', `${d.energy.toFixed(1)} / ${d.maxEnergy.toFixed(1)}`],
         ['Radius', t.radius.toFixed(2)],
         ['Feeding L / V / E', `${pct(t.light)} / ${pct(t.vent)} / ${pct(t.engulf)}`],
-        ['Motility', t.motility.toFixed(2)],
+        ['Flagellum', flagellumText(t.motility, t.radius)],
         ['Tolerance', t.tolerance.toFixed(3)],
         ['Gene swapping', t.swap.toFixed(2)],
         ['Divides at', pct(t.divThreshold)],
@@ -385,7 +394,7 @@ function showInspector(d: CellDetail): void {
     html +=
       `<h2>${label}: ${org.cells.length}${org.truncated ? '+' : ''} cells, ${kinds} cell type${kinds > 1 ? 's' : ''}</h2>` +
       '<canvas id="orgCanvas"></canvas>' +
-      '<p class="muted small">Tap a cell in the drawing to inspect it. Ring = this cell, faint = low energy.</p>' +
+      '<p class="muted small">Tap a cell in the drawing to inspect it. Ring = this cell, faint = low energy, wavy line = flagellum.</p>' +
       '<div class="legend">' +
       counts
         .map((c, k) => (c ? `<span><i style="background:${TYPE_COLOURS[k]}"></i>${CELL_TYPES[k]} ${c}</span>` : ''))

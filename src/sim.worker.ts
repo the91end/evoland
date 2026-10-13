@@ -418,6 +418,7 @@ function organismOf(w: World, i: number): OrganismDetail | null {
       type: w.cellType[c],
       energy: w.energy[c] / w.maxE[c],
       radius: w.radius[c],
+      motility: w.mot[c],
       x: w.x[c],
       y: w.y[c],
       z: w.z[c],
