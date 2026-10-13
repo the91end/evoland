@@ -49,6 +49,43 @@ export interface Frame {
   nd: number;
   debris: Float32Array;
   vents: { x: number; z: number; strength: number; stock: number }[];
+  bodies: BodyFrame[];
+}
+
+/** A big organism as drawn: a few tissue parts around a centre. */
+export interface BodyFrame {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  cellRadius: number;
+  species: number;
+  energy: number;
+  tag: [number, number, number];
+  feed: [number, number, number];
+  /** One part per tissue: cell type, cells, and offset from the centre in body radii. */
+  parts: { type: number; n: number; ox: number; oy: number; oz: number }[];
+}
+
+export interface BodyDetail {
+  type: 'inspectBody';
+  id: number;
+  alive: boolean;
+  species: number;
+  generation: number;
+  age: number;
+  lifespan: number;
+  energy: number;
+  maxEnergy: number;
+  cells: number;
+  adult: number;
+  radius: number;
+  /** Cells per tissue, in CELL_TYPES order. */
+  tissue: number[];
+  genes: number[];
+  traits: CellDetail['traits'];
+  ancestors: ({ id: number } & LineageRecord)[];
 }
 
 export interface Stats {
@@ -62,6 +99,7 @@ export interface Stats {
   policed: number;
   germReleases: number;
   fusions: number;
+  bodiesFormed: number;
 }
 
 export interface OrganismDetail {
@@ -129,4 +167,4 @@ export interface CellDetail {
   pos: [number, number, number];
 }
 
-export type FromWorker = Frame | Stats | CellDetail | { type: 'ready'; params: Params };
+export type FromWorker = Frame | Stats | CellDetail | BodyDetail | { type: 'ready'; params: Params };

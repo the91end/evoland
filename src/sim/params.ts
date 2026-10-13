@@ -76,6 +76,10 @@ export interface Params {
   germEnergy: number;
   /** Ticks a sex cell lives while it looks for a partner. */
   gameteLife: number;
+  /** Bodies this many cells big switch to the simpler big-organism model. */
+  bodyThreshold: number;
+  /** Lifespan of a big organism, in ticks. */
+  bodyLifespan: number;
 
   // Life cycle
   divisionLoss: number;
@@ -126,6 +130,8 @@ export const DEFAULT_PARAMS: Params = {
 
   germEnergy: 0.7,
   gameteLife: 500,
+  bodyThreshold: 64,
+  bodyLifespan: 9000,
 
   divisionLoss: 0.1,
   divisionCooldown: 60,

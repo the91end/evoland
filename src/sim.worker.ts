@@ -3,9 +3,9 @@
  * Runs the World at a fixed tick rate off the main thread and streams
  * frames back. The page only draws.
  */
-import { World } from './sim/world';
+import { World, bodyCells } from './sim/world';
 import { GENE_COUNT, OUTPUTS, SWITCHES, traitsOf } from './sim/genome';
-import type { CellDetail, Frame, FromWorker, OrganismDetail, Stats, ToWorker } from './protocol';
+import type { BodyFrame, CellDetail, Frame, FromWorker, OrganismDetail, Stats, ToWorker } from './protocol';
 
 /** Most member cells sent for one organism. */
 const ORGANISM_MAX = 256;
@@ -203,6 +203,24 @@ function sendFrame(): void {
     maxGuests: mg,
     nd: w.nd,
     debris,
+    bodies: w.bodies.map((b): BodyFrame => {
+      const t = traitsOf(b.genes);
+      return {
+        id: b.id,
+        x: b.x,
+        y: b.y,
+        z: b.z,
+        radius: b.radius,
+        cellRadius: b.cellRadius,
+        species: b.species,
+        energy: b.energy / (w.p.energyPerVolume * b.cellRadius ** 3 * Math.max(1, bodyCells(b))),
+        tag: [b.genes[5], b.genes[6], b.genes[7]],
+        feed: [t.light, t.vent, t.engulf],
+        parts: b.tissue.flatMap((n, k) =>
+          n > 0 ? [{ type: k, n, ox: b.place[k * 3], oy: b.place[k * 3 + 1], oz: b.place[k * 3 + 2] }] : [],
+        ),
+      };
+    }),
     vents: w.vents.map((v) => ({ x: v.x, z: v.z, strength: v.strength, stock: v.stock / w.p.ventStock })),
   };
   post(frame, [
@@ -240,6 +258,7 @@ function sendStats(): void {
     policed: w.policed,
     germReleases: w.germReleases,
     fusions: w.fusions,
+    bodiesFormed: w.bodiesFormed,
   };
   post(msg);
 }
@@ -270,6 +289,29 @@ function sendInspect(): void {
       }
       a = w.lineage.get(a)?.parent ?? 0;
     }
+  }
+  const body = i < 0 ? w.bodies.find((b) => b.id === id) : undefined;
+  if (body) {
+    const t = traitsOf(body.genes);
+    post({
+      type: 'inspectBody',
+      id,
+      alive: true,
+      species: body.species,
+      generation: body.gen,
+      age: body.age,
+      lifespan: body.lifespan,
+      energy: body.energy,
+      maxEnergy: w.p.energyPerVolume * body.cellRadius ** 3 * bodyCells(body!),
+      cells: bodyCells(body!),
+      adult: body.adult,
+      radius: body.radius,
+      tissue: body.tissue.slice(),
+      genes: Array.from(body.genes),
+      traits: t,
+      ancestors,
+    });
+    return;
   }
   if (i < 0) {
     // Dead: send what the lineage remembers so the panel can say so.

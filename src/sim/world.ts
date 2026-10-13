@@ -67,6 +67,45 @@ export interface Vent {
   strength: number;
 }
 
+/**
+ * A big organism. Past bodyThreshold cells a body stops being simulated
+ * cell by cell and becomes a few tissues, one per cell type, each with a
+ * cell count, the switch outputs its cells had, and where in the body it
+ * sits. It keeps growing by the same genes, and its only way to have
+ * offspring is to release germ cells that start again from one cell.
+ */
+export interface Body {
+  id: number;
+  /** Id of the cell whose body this was when it turned big. */
+  founder: number;
+  species: number;
+  gen: number;
+  genes: Float32Array;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  /** Cells per tissue, in CELL_TYPES order. */
+  tissue: number[];
+  /** Mean switch outputs per tissue (OUTPUTS per tissue). */
+  out: Float32Array;
+  /** Where each tissue sits, as an offset from the centre in body radii. */
+  place: Float32Array;
+  energy: number;
+  age: number;
+  lifespan: number;
+  growCd: number;
+  germCd: number;
+  biteCd: number;
+  /** Cell radius from the genes, and the body's own radius. */
+  cellRadius: number;
+  radius: number;
+  adult: number;
+  dead: boolean;
+}
+
 export interface LineageRecord {
   parent: number;
   gen: number;
@@ -105,6 +144,9 @@ export interface StatsSample {
   germColonies: number;
   /** Sex cells looking for a partner. */
   gametes: number;
+  /** Big organisms alive, and the biggest one's cell count. */
+  bodies: number;
+  biggestBody: number;
 }
 
 export class World {
@@ -214,6 +256,9 @@ export class World {
   // ---- environment ----
   readonly vents: Vent[] = [];
 
+  // ---- big organisms ----
+  readonly bodies: Body[] = [];
+
   // ---- spatial hash ----
   private readonly gx: number;
   private readonly gy: number;
@@ -243,6 +288,7 @@ export class World {
   policed = 0;
   germReleases = 0;
   fusions = 0;
+  bodiesFormed = 0;
 
   constructor(seed: string | number = 1, params: Partial<Params> = {}) {
     this.p = { ...DEFAULT_PARAMS, ...params };
@@ -621,6 +667,7 @@ export class World {
     this.updateVents();
     this.buildHash();
     this.findColonies();
+    this.formBodies();
     for (let b = 0; b < this.sugar.length; b++) {
       this.sugar[b] *= BYPRODUCT_DECAY;
       this.fert[b] *= BYPRODUCT_DECAY;
@@ -643,6 +690,7 @@ export class World {
     }
 
     this.updateBonds();
+    this.updateBodies();
     this.updateDebris();
     this.removeDead();
 
@@ -1505,6 +1553,308 @@ export class World {
   }
 
   // =====================================================================
+  // Big organisms
+  // =====================================================================
+
+  /** Bodies that reach the threshold turn into big organisms. */
+  private formBodies(): void {
+    const { p } = this;
+    const n = this.n;
+    const W = p.width;
+    for (let root = 0; root < n; root++) {
+      if (this.colony[root] !== root || this.colonySize[root] < p.bodyThreshold || this.dead[root]) continue;
+      const T = CELL_TYPES.length;
+      const tissue = new Array<number>(T).fill(0);
+      const out = new Float32Array(T * OUTPUTS);
+      const place = new Float32Array(T * 3);
+      const cx = this.x[root] + this.colonyX[root];
+      const cz = this.z[root] + this.colonyZ[root];
+      const cy = this.colonyY[root];
+      const reach = Math.max(1, this.colonyReach[root]);
+      let energy = 0;
+      let oldest = root;
+      for (let i = 0; i < n; i++) {
+        if (this.colony[i] !== root || this.dead[i]) continue;
+        const t = this.cellType[i] === SEX_TYPE ? 0 : this.cellType[i];
+        tissue[t]++;
+        for (let k = 0; k < OUTPUTS; k++) out[t * OUTPUTS + k] += this.out[i * OUTPUTS + k];
+        place[t * 3] += wrapDelta(this.x[i] - cx, W) / reach;
+        place[t * 3 + 1] += (this.y[i] - cy) / reach;
+        place[t * 3 + 2] += wrapDelta(this.z[i] - cz, W) / reach;
+        energy += this.energy[i];
+        if (this.stage[i] < this.stage[oldest]) oldest = i;
+        // The cells become the body: they leave no debris and their guests go with them.
+        this.guestCount[i] = 0;
+        this.kill(i, false);
+      }
+      for (let t = 0; t < T; t++)
+        if (tissue[t] > 0) {
+          for (let k = 0; k < OUTPUTS; k++) out[t * OUTPUTS + k] /= tissue[t];
+          for (let k = 0; k < 3; k++) place[t * 3 + k] /= tissue[t];
+        }
+      // The body's genome is the one its cells grew from: the least divided cell's.
+      const genes = this.genes.slice(oldest * GENE_COUNT, (oldest + 1) * GENE_COUNT);
+      const t = traitsOf(genes);
+      const id = this.nextId++;
+      const body: Body = {
+        id,
+        founder: this.id[oldest],
+        species: this.species[oldest],
+        gen: this.gen[oldest],
+        genes,
+        x: wrap(cx, W),
+        y: clamp(cy, 1, p.depth - 1),
+        z: wrap(cz, W),
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        tissue,
+        out,
+        place,
+        energy,
+        age: 0,
+        lifespan: Math.round(p.bodyLifespan * this.rng.range(0.85, 1.15)),
+        growCd: p.divisionCooldown,
+        germCd: 0,
+        biteCd: 0,
+        cellRadius: t.radius,
+        radius: 0,
+        adult: t.colonyLimit,
+        dead: false,
+      };
+      this.sizeBody(body);
+      this.bodies.push(body);
+      this.lineage.set(id, { parent: this.id[oldest], gen: this.gen[oldest] + 1, born: this.tick, died: -1, species: body.species });
+      this.bodiesFormed++;
+    }
+  }
+
+  private sizeBody(b: Body): void {
+    b.radius = b.cellRadius * Math.cbrt(Math.max(1, bodyCells(b)));
+  }
+
+  private bodyMaxE(b: Body): number {
+    return this.p.energyPerVolume * b.cellRadius ** 3 * bodyCells(b);
+  }
+
+  private updateBodies(): void {
+    for (const b of this.bodies) if (!b.dead) this.updateBody(b);
+    let w = 0;
+    for (const b of this.bodies) if (!b.dead) this.bodies[w++] = b;
+    this.bodies.length = w;
+  }
+
+  private updateBody(b: Body): void {
+    const { p, rng } = this;
+    const T = CELL_TYPES.length;
+    const W = p.width;
+    const t = traitsOf(b.genes);
+    const r = b.cellRadius;
+    const r2 = r * r;
+    const cells = bodyCells(b);
+    const effL = efficiency(t.light);
+    const effV = efficiency(t.vent);
+    const effE = efficiency(t.engulf);
+
+    // ---- feed: every tissue feeds by the genes, scaled by its feeding output ----
+    let feedCells = 0;
+    let swim = 0;
+    for (let k = 0; k < T; k++) {
+      const c = b.tissue[k];
+      if (!c) continue;
+      feedCells += c * (1 + b.out[k * OUTPUTS + Output.Feed]);
+      swim += c * t.motility * (1 + b.out[k * OUTPUTS + Output.Swim]);
+    }
+    swim /= cells;
+    // A body shades its own water columns, so light is capped by its footprint.
+    const columns = Math.max(1, (Math.PI * b.radius * b.radius) / (p.hashCell * p.hashCell));
+    const demand = p.kLight * effL * this.lightAt(b.y) * r2 * feedCells;
+    const lightCap = p.lightPerColumn * this.sun * columns;
+    const light = demand > 0 && lightCap > 0 ? demand / (1 + demand / lightCap) : 0;
+    let vent = 0;
+    if (effV > 0) {
+      const k = p.kVent * effV * r2 * feedCells;
+      for (const v of this.vents) {
+        const w = this.ventWeight(v, b.x, b.y, b.z);
+        if (w < 1e-4) continue;
+        const take = Math.min(v.stock, k * w);
+        v.stock -= take;
+        vent += take;
+      }
+    }
+    const maxE = this.bodyMaxE(b);
+    b.energy = Math.min(maxE, b.energy + light + vent);
+
+    // ---- swim toward its food: up by day for light, toward vents for vent food ----
+    let sx = rng.gauss() * 0.3,
+      sy = rng.gauss() * 0.3,
+      sz = rng.gauss() * 0.3;
+    if (effL >= effV) sy += this.sun > 0 ? 1 : -0.3;
+    else {
+      let best = 0;
+      for (const v of this.vents) {
+        const w = this.ventWeight(v, b.x, 0, b.z) + 1e-3 * v.strength;
+        if (w > best) {
+          best = w;
+          sx = wrapDelta(v.x - b.x, W);
+          sz = wrapDelta(v.z - b.z, W);
+          sy = -b.y;
+        }
+      }
+    }
+    const sl = Math.hypot(sx, sy, sz) || 1;
+    const speed = (Math.min(1.5, swim) * p.maxSpeed) / Math.sqrt(b.radius);
+    b.vx = 0.8 * b.vx + 0.2 * (sx / sl) * speed;
+    b.vy = 0.8 * b.vy + 0.2 * (sy / sl) * speed;
+    b.vz = 0.8 * b.vz + 0.2 * (sz / sl) * speed;
+    currentAt(b.x, b.y, b.z, this.tick, p, this.tmp);
+    b.x = wrap(b.x + b.vx + this.tmp[0], W);
+    b.y = clamp(b.y + b.vy + this.tmp[1], b.radius * 0.5, p.depth - b.radius * 0.5);
+    b.z = wrap(b.z + b.vz + this.tmp[2], W);
+
+    // ---- hunt: swallow smaller strangers it touches ----
+    if (effE > 0.05) this.bodyHunt(b, effE, maxE);
+
+    // ---- pay ----
+    b.energy -= cells * (p.kBasal * r2 + p.kBond * 2) + p.kSwim * swim * swim * r2 * cells;
+    b.age++;
+    if (b.energy <= 0 || b.age > b.lifespan) {
+      this.killBody(b);
+      return;
+    }
+
+    // ---- grow by the same plan: new cells join tissues in the body's proportions ----
+    if (b.growCd > 0) b.growCd--;
+    else if (cells < b.adult && b.energy >= t.divThreshold * maxE) {
+      b.growCd = p.divisionCooldown;
+      let dividers = 0;
+      for (let k = 0; k < T; k++) dividers += b.tissue[k] * Math.max(0, b.out[k * OUTPUTS + Output.Divide]);
+      const add = Math.min(b.adult - cells, Math.max(1, Math.round(cells * 0.03 * (1 + (4 * dividers) / cells))));
+      const costPer = p.energyPerVolume * r ** 3 * (0.5 + p.divisionLoss);
+      for (let a = 0; a < add && b.energy > costPer; a++) {
+        let pick = rng.next() * cells;
+        let k = 0;
+        while (k < T - 1 && pick >= b.tissue[k]) pick -= b.tissue[k++];
+        b.tissue[k]++;
+        b.energy -= costPer;
+      }
+      this.sizeBody(b);
+    }
+
+    // ---- reproduce: a full body releases germ cells, which start over from one cell ----
+    if (b.germCd > 0) b.germCd--;
+    const germ = b.tissue[GERM_TYPE];
+    if (germ > 0 && b.germCd === 0 && b.energy >= p.germEnergy * maxE && this.n < this.cap) {
+      b.germCd = Math.max(10, Math.round(200 / germ));
+      rng.unit(this.tmp);
+      const c = this.addCell(
+        b.genes,
+        0,
+        wrap(b.x + this.tmp[0] * b.radius, W),
+        clamp(b.y + this.tmp[1] * b.radius, 1, p.depth - 1),
+        wrap(b.z + this.tmp[2] * b.radius, W),
+        b.id,
+        b.gen + 1,
+      );
+      mutate(this.genes, c * GENE_COUNT, t.mutationRate, p.mutationStep, rng);
+      this.refreshTraits(c);
+      this.species[c] = b.species;
+      const rec = this.lineage.get(this.id[c]);
+      if (rec) rec.species = b.species;
+      this.energy[c] = this.maxE[c];
+      this.noBond[c] = LEAVE_TICKS;
+      b.energy -= this.maxE[c];
+      b.tissue[GERM_TYPE]--;
+      this.sizeBody(b);
+      this.germReleases++;
+      if (rng.chance(this.sexG[c])) {
+        this.gamete[c] = p.gameteLife;
+        this.cellType[c] = SEX_TYPE;
+      }
+    }
+  }
+
+  /** A big organism swallows a single cell, or bites a smaller body, that it touches. */
+  private bodyHunt(b: Body, effE: number, maxE: number): void {
+    const { p, rng } = this;
+    const W = p.width;
+    if (b.biteCd > 0) {
+      b.biteCd--;
+      return;
+    }
+    const G = GENE_COUNT;
+    const tol = 0.5 * b.genes[Gene.Tolerance];
+    const nn = this.gatherNeighbours(b.x, b.y, b.z);
+    for (let q = 0; q < nn; q++) {
+      const j = this.near[q];
+      if (this.dead[j]) continue;
+      const dx = wrapDelta(this.x[j] - b.x, W);
+      const dy = this.y[j] - b.y;
+      const dz = wrapDelta(this.z[j] - b.z, W);
+      const reach = b.radius + this.radius[j];
+      if (dx * dx + dy * dy + dz * dz > reach * reach) continue;
+      if (tagDistance(this.genes, j * G, b.genes, 0) <= tol) continue;
+      const guard = 1 - Math.max(0, this.out[j * OUTPUTS + Output.Defend]);
+      if (!rng.chance(effE * guard)) continue;
+      b.energy = Math.min(maxE, b.energy + p.engulfGain * this.energy[j]);
+      this.dropDebris(j, ENGULF_DEBRIS * this.energy[j]);
+      this.kill(j, false);
+      this.engulfed++;
+      b.biteCd = ENGULF_COOLDOWN;
+      return;
+    }
+    // Bigger bodies take bites out of smaller ones, unless defence cells stop them.
+    for (const o of this.bodies) {
+      if (o === b || o.dead || o.radius * ENGULF_SIZE_RATIO > b.radius) continue;
+      const dx = wrapDelta(o.x - b.x, W);
+      const dy = o.y - b.y;
+      const dz = wrapDelta(o.z - b.z, W);
+      const reach = b.radius + o.radius;
+      if (dx * dx + dy * dy + dz * dz > reach * reach) continue;
+      if (tagDistance(o.genes, 0, b.genes, 0) <= tol) continue;
+      b.biteCd = ENGULF_COOLDOWN;
+      let def = 0;
+      const oc = bodyCells(o);
+      for (let k = 0; k < o.tissue.length; k++) def += o.tissue[k] * Math.max(0, o.out[k * OUTPUTS + Output.Defend]);
+      if (!rng.chance(effE * (1 - Math.min(1, (2 * def) / oc)))) return;
+      const bite = Math.max(1, Math.round(oc * 0.1));
+      const share = bite / oc;
+      b.energy = Math.min(maxE, b.energy + p.engulfGain * o.energy * share);
+      o.energy *= 1 - share;
+      for (let a = 0; a < bite; a++) {
+        let pick = rng.next() * bodyCells(o);
+        let k = 0;
+        while (k < o.tissue.length - 1 && pick >= o.tissue[k]) pick -= o.tissue[k++];
+        if (o.tissue[k] > 0) o.tissue[k]--;
+      }
+      if (bodyCells(o) < 2) this.killBody(o);
+      else this.sizeBody(o);
+      this.engulfed++;
+      return;
+    }
+  }
+
+  private killBody(b: Body): void {
+    if (b.dead) return;
+    b.dead = true;
+    const rec = this.lineage.get(b.id);
+    if (rec) rec.died = this.tick;
+    // A dead body breaks up into a few pieces of debris.
+    const pieces = Math.min(8, Math.max(1, Math.round(bodyCells(b) / 16)));
+    const energy = this.p.debrisFraction * (Math.max(0, b.energy) + 0.2 * this.bodyMaxE(b));
+    for (let k = 0; k < pieces && this.nd < this.dCap; k++) {
+      const d = this.nd++;
+      this.rng.unit(this.tmp);
+      this.dx[d] = wrap(b.x + this.tmp[0] * b.radius, this.p.width);
+      this.dy[d] = clamp(b.y + this.tmp[1] * b.radius, 0.5, this.p.depth);
+      this.dz[d] = wrap(b.z + this.tmp[2] * b.radius, this.p.width);
+      this.dE[d] = energy / pieces;
+      this.dAge[d] = 0;
+      this.dGenes.set(b.genes, d * GENE_COUNT);
+    }
+  }
+
+  // =====================================================================
   // Bookkeeping
   // =====================================================================
 
@@ -1513,6 +1863,13 @@ export class World {
     const keep = new Set<number>();
     for (let i = 0; i < this.n; i++) {
       let id = this.id[i];
+      for (let depth = 0; depth <= LINEAGE_DEPTH && id && !keep.has(id); depth++) {
+        keep.add(id);
+        id = this.lineage.get(id)?.parent ?? 0;
+      }
+    }
+    for (const b of this.bodies) {
+      let id = b.id;
       for (let depth = 0; depth <= LINEAGE_DEPTH && id && !keep.has(id); depth++) {
         keep.add(id);
         id = this.lineage.get(id)?.parent ?? 0;
@@ -1582,6 +1939,8 @@ export class World {
         : 0,
       germColonies: [...colonyTypes.values()].filter((mask) => mask & (1 << GERM_TYPE)).length,
       gametes: types[SEX_TYPE],
+      bodies: this.bodies.length,
+      biggestBody: this.bodies.reduce((m, b) => Math.max(m, bodyCells(b)), 0),
     });
     if (this.history.length > STATS_MAX) {
       // Thin older history by half so the chart spans the whole run.
@@ -1648,6 +2007,12 @@ function wrapDelta(d: number, w: number): number {
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+export function bodyCells(b: Body): number {
+  let c = 0;
+  for (const t of b.tissue) c += t;
+  return c;
 }
 
 function popcount(m: number): number {

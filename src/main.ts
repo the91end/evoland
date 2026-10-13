@@ -6,7 +6,7 @@ import { COLONY_SERIES, drawColonies, drawFeeding, drawPopulation, drawTypes } f
 import { DEFAULT_PARAMS, type Params } from './sim/params';
 import { CELL_TYPES, GENE_NAMES, OUTPUT_NAMES } from './sim/genome';
 import type { SpeciesInfo } from './sim/species';
-import type { CellDetail, FromWorker, Stats, ToWorker } from './protocol';
+import type { BodyDetail, CellDetail, FromWorker, Stats, ToWorker } from './protocol';
 import SimWorker from './sim.worker.ts?worker&inline';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -64,6 +64,9 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       break;
     case 'inspect':
       showInspector(m);
+      break;
+    case 'inspectBody':
+      showBodyInspector(m);
       break;
   }
 };
@@ -167,7 +170,7 @@ function drawSide(): void {
     $('multiTotals').textContent =
       `${last.typesPerColony.toFixed(1)} cell types per colony · ${last.germColonies} colonies with a germ cell · ` +
       `${stats.germReleases.toLocaleString()} germ cells released · ` +
-      `${stats.fusions.toLocaleString()} sex cell fusions`;
+      `${stats.fusions.toLocaleString()} sex cell fusions · ${stats.bodiesFormed.toLocaleString()} big organisms formed`;
 
   const alive = stats.species.filter((s) => s.count > 0);
   const big = alive.filter((s) => s.count >= 10).length;
@@ -248,6 +251,16 @@ $('inspClose').addEventListener('click', closeInspector);
 $('biggestBtn').addEventListener('click', () => {
   const f = pond.latest;
   if (!f) return;
+  // A big organism beats any cell-level body.
+  const big = f.bodies.reduce<(typeof f.bodies)[number] | null>(
+    (m, b) => (!m || b.parts.reduce((s, p) => s + p.n, 0) > m.parts.reduce((s, p) => s + p.n, 0) ? b : m),
+    null,
+  );
+  if (big) {
+    pond.followId = big.id;
+    send({ type: 'inspect', id: big.id });
+    return;
+  }
   let best = -1;
   let bestScore = 1;
   for (let i = 0; i < f.n; i++) {
@@ -270,6 +283,46 @@ function closeInspector(): void {
   pond.followId = null;
   $('inspector').hidden = true;
   send({ type: 'inspect', id: null });
+}
+
+function showBodyInspector(d: BodyDetail): void {
+  if (pond.followId !== d.id) return;
+  $('inspector').hidden = false;
+  const sp = speciesById.get(d.species);
+  $('inspTitle').innerHTML = `<span class="swatch" style="background:${speciesCss(d.species)}"></span>Big organism #${d.id}`;
+  const t = d.traits;
+  const kinds = d.tissue.filter((c) => c > 0).length;
+  let html =
+    `<h2>${d.cells.toLocaleString()} cells, ${kinds} tissue${kinds === 1 ? '' : 's'}</h2>` +
+    '<div class="tissueBar">' +
+    d.tissue
+      .map((c, k) =>
+        c ? `<span title="${CELL_TYPES[k]} ${c}" style="flex:${c};background:${TYPE_COLOURS[k]}"></span>` : '',
+      )
+      .join('') +
+    '</div><div class="legend">' +
+    d.tissue.map((c, k) => (c ? `<span><i style="background:${TYPE_COLOURS[k]}"></i>${CELL_TYPES[k]} ${c}</span>` : '')).join('') +
+    '</div>' +
+    '<p class="muted small">Too big to track cell by cell, so it is simulated as tissues. ' +
+    'It grows by the same genes, and its offspring start again from a single germ cell.</p>';
+  const rows: [string, string][] = [
+    ['Species', `#${d.species}${sp ? ` (${sp.count} cells)` : ''}`],
+    ['Generation', String(d.generation)],
+    ['Age', `${d.age} / ${d.lifespan} ticks`],
+    ['Energy', `${d.energy.toFixed(0)} / ${d.maxEnergy.toFixed(0)}`],
+    ['Grows to', `${d.adult.toLocaleString()} cells`],
+    ['Body radius', d.radius.toFixed(1)],
+    ['Feeding L / V / E', `${pct(t.light)} / ${pct(t.vent)} / ${pct(t.engulf)}`],
+    ['Germ cells', String(d.tissue[CELL_TYPES.indexOf('germ')])],
+    ['Sex', t.sex.toFixed(2)],
+  ];
+  html += '<table>' + rows.map(([k, v]) => `<tr><td class="muted">${k}</td><td>${v}</td></tr>`).join('') + '</table>';
+  html += '<h2>Genome</h2><table>';
+  d.genes.forEach((g, k) => {
+    html += `<tr><td class="muted small">${GENE_NAMES[k]}</td><td><span class="gene" style="width:${Math.max(2, g * 80)}px"></span> ${g.toFixed(2)}</td></tr>`;
+  });
+  html += '</table>';
+  $('inspBody').innerHTML = html;
 }
 
 function showInspector(d: CellDetail): void {
@@ -410,6 +463,8 @@ const LIVE: [keyof Params, string, number, number][] = [
   ['kGuest', 'Guest upkeep', 0, 0.01],
   ['germEnergy', 'Germ cell leaves at energy', 0.3, 1],
   ['gameteLife', 'Sex cell lifetime (ticks)', 50, 3000],
+  ['bodyThreshold', 'Big organism from (cells)', 8, 256],
+  ['bodyLifespan', 'Big organism lifespan (ticks)', 1000, 50000],
 ];
 
 /** Parameters that shape the pond itself, applied on restart. */

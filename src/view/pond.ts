@@ -2,12 +2,14 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Params } from '../sim/params';
 import { currentAt } from '../sim/world';
-import type { Frame } from '../protocol';
+import type { BodyFrame, Frame } from '../protocol';
 
 export type ColourMode = 'tag' | 'species' | 'feeding' | 'energy' | 'colony' | 'type' | 'multi';
 
 /** Most organism members outlined around a followed cell. */
 const MAX_MEMBERS = 512;
+/** Most tissue parts drawn for big organisms. */
+const MAX_BODY_PARTS = 4000;
 
 /** Cell type colours, in CELL_TYPES order. */
 export const TYPE_COLOURS = ['#6f8794', '#e8d94a', '#5fb8ff', '#5fd3c6', '#ff7a5c', '#b06cf0', '#ffffff', '#ff5fc8'];
@@ -42,6 +44,8 @@ export class Pond {
   private ventSprites: THREE.Sprite[] = [];
   private ventTexture = radialTexture();
   private selection: THREE.Mesh;
+  /** Big organisms: one sphere per tissue part. */
+  private bodyParts!: THREE.InstancedMesh;
   /** Wire shells around every other cell of the followed cell's organism. */
   private members: THREE.InstancedMesh;
   private sunLight: THREE.DirectionalLight;
@@ -222,6 +226,16 @@ export class Pond {
     this.guests.count = 0;
     this.world.add(this.guests);
 
+    this.bodyParts = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(1, 20, 14),
+      new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0.0, transparent: true, opacity: 0.92 }),
+      MAX_BODY_PARTS,
+    );
+    this.bodyParts.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_BODY_PARTS * 3), 3);
+    this.bodyParts.frustumCulled = false;
+    this.bodyParts.count = 0;
+    this.world.add(this.bodyParts);
+
     const debrisGeo = new THREE.BufferGeometry();
     debrisGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(p.cellCap * 3), 3));
     debrisGeo.setDrawRange(0, 0);
@@ -278,7 +292,7 @@ export class Pond {
     }
   }
 
-  /** Returns the id of the cell under a screen point, or null. */
+  /** Returns the id of the cell or big organism under a screen point, or null. */
   pick(clientX: number, clientY: number): number | null {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(
@@ -287,6 +301,19 @@ export class Pond {
     );
     const ray = new THREE.Raycaster();
     ray.setFromCamera(ndc, this.camera);
+    // Big organisms first: they are what you see when you tap one.
+    let bodyHit: number | null = null;
+    let bodyAlong = Infinity;
+    const c = new THREE.Vector3();
+    for (const b of this.curr?.bodies ?? []) {
+      c.set(b.x, b.y, b.z);
+      const along = c.clone().sub(ray.ray.origin).dot(ray.ray.direction);
+      if (ray.ray.distanceToPoint(c) < b.radius * 1.1 && along < bodyAlong) {
+        bodyAlong = along;
+        bodyHit = b.id;
+      }
+    }
+    if (bodyHit !== null) return bodyHit;
     // Pad hits a little so small cells are clickable.
     const hits = ray.intersectObject(this.cells);
     if (hits.length && hits[0].instanceId !== undefined) return this.drawnIds[hits[0].instanceId];
@@ -410,7 +437,15 @@ export class Pond {
     bpos.needsUpdate = true;
     this.bonds.geometry.setDrawRange(0, nb);
 
-    if (this.followId !== null && followed >= 0) {
+    const followedBody = this.drawBodies(f, speciesColour);
+    if (this.followId !== null && followedBody) {
+      this.v.set(followedBody.x, followedBody.y, followedBody.z);
+      this.selection.visible = true;
+      this.selection.position.copy(this.v);
+      this.selection.scale.setScalar(followedBody.radius * 1.3 + 2);
+      this.members.count = 0;
+      this.moveCameraTo(W);
+    } else if (this.followId !== null && followed >= 0) {
       const r = f.radius[followed];
       this.v.set(this.drawn[followed * 3], this.drawn[followed * 3 + 1], this.drawn[followed * 3 + 2]);
       this.selection.visible = true;
@@ -428,19 +463,73 @@ export class Pond {
       }
       this.members.count = nm;
       this.members.instanceMatrix.needsUpdate = true;
-      const delta = this.v.clone().sub(this.controls.target);
-      if (delta.length() > W / 3) {
-        // Jumped across the wrap: move the camera with it.
-        this.camera.position.add(delta);
-        this.controls.target.add(delta);
-      } else {
-        delta.multiplyScalar(0.15);
-        this.camera.position.add(delta);
-        this.controls.target.add(delta);
-      }
+      this.moveCameraTo(W);
     } else {
       this.selection.visible = false;
       this.members.count = 0;
+    }
+  }
+
+  /** Eases the camera toward this.v, jumping when the target wrapped across the pond. */
+  private moveCameraTo(W: number): void {
+    const delta = this.v.clone().sub(this.controls.target);
+    if (delta.length() <= W / 3) delta.multiplyScalar(0.15);
+    this.camera.position.add(delta);
+    this.controls.target.add(delta);
+  }
+
+  /** Draws big organisms as tissue parts; returns the followed one, if any. */
+  private drawBodies(f: Frame, speciesColour: (id: number) => THREE.Color): BodyFrame | null {
+    let k = 0;
+    let followed: BodyFrame | null = null;
+    const colors = this.bodyParts.instanceColor!.array as Float32Array;
+    for (const b of f.bodies) {
+      if (b.id === this.followId) followed = b;
+      for (const part of b.parts) {
+        if (k >= MAX_BODY_PARTS) break;
+        // Each tissue is a ball of its cells' volume, placed where those cells sat.
+        const r = b.cellRadius * Math.cbrt(part.n) * 1.15;
+        const spread = Math.max(0, b.radius - r) * 0.9;
+        this.m
+          .makeScale(r, r, r)
+          .setPosition(b.x + part.ox * spread, b.y + part.oy * spread, b.z + part.oz * spread);
+        this.bodyParts.setMatrixAt(k, this.m);
+        this.bodyColour(b, part.type, speciesColour);
+        colors[k * 3] = this.c.r;
+        colors[k * 3 + 1] = this.c.g;
+        colors[k * 3 + 2] = this.c.b;
+        k++;
+      }
+    }
+    this.bodyParts.count = k;
+    this.bodyParts.instanceMatrix.needsUpdate = true;
+    this.bodyParts.instanceColor!.needsUpdate = true;
+    return followed;
+  }
+
+  private bodyColour(b: BodyFrame, type: number, speciesColour: (id: number) => THREE.Color): void {
+    switch (this.colourMode) {
+      case 'tag':
+        this.c.setRGB(b.tag[0], b.tag[1], b.tag[2]);
+        break;
+      case 'species':
+        this.c.copy(speciesColour(b.species));
+        break;
+      case 'feeding':
+        this.c.setRGB(
+          b.feed[0] * FEED_COLOURS[0].r + b.feed[1] * FEED_COLOURS[1].r + b.feed[2] * FEED_COLOURS[2].r,
+          b.feed[0] * FEED_COLOURS[0].g + b.feed[1] * FEED_COLOURS[1].g + b.feed[2] * FEED_COLOURS[2].g,
+          b.feed[0] * FEED_COLOURS[0].b + b.feed[1] * FEED_COLOURS[1].b + b.feed[2] * FEED_COLOURS[2].b,
+        );
+        break;
+      case 'colony':
+        this.c.setHSL((b.id * 0.61803) % 1, 0.7, 0.55);
+        break;
+      case 'energy':
+        this.c.setHSL(0.55 - 0.45 * b.energy, 0.8, 0.25 + 0.4 * b.energy);
+        break;
+      default:
+        this.c.set(TYPE_COLOURS[type]);
     }
   }
 

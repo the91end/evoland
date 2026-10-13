@@ -230,7 +230,7 @@ describe('development', () => {
     const g = w.genes;
     // A sticky cell whose body plan says "grow to 4 cells".
     g[Gene.Adhesion] = 1;
-    g[Gene.ColonySize] = Math.sqrt(2 / 62);
+    g[Gene.ColonySize] = 0.1; // 2 * 1024^0.1 = 4 cells
     w.refreshTraitsFor(0);
     w.energy[0] = w.maxE[0];
     w.age[0] = 0;
@@ -245,5 +245,21 @@ describe('development', () => {
     w.findColonies();
     expect(Math.max(...w.colonySize.subarray(0, w.n))).toBeLessThanOrEqual(4);
     expect(w.stage[0]).toBeGreaterThan(0);
+  });
+
+  it('turns a body past the threshold into a big organism', () => {
+    const w = new World('big', { startingCells: 1, cellCap: 300, mutationStep: 0, bodyThreshold: 4 });
+    const g = w.genes;
+    g[Gene.Adhesion] = 1;
+    g[Gene.ColonySize] = 0.3; // grows to 16 cells
+    w.refreshTraitsFor(0);
+    for (let t = 0; t < 600 && w.bodiesFormed === 0; t++) {
+      for (let i = 0; i < w.n; i++) {
+        w.energy[i] = w.maxE[i];
+        w.lifespan[i] = 1e6;
+      }
+      w.step();
+    }
+    expect(w.bodiesFormed).toBeGreaterThan(0);
   });
 });

@@ -150,9 +150,9 @@ export function traitsOf(g: ArrayLike<number>, o = 0): Traits {
   };
 }
 
-/** Colony size limit from its gene: 2 to 64 cells. */
+/** Adult body size from its gene: 2 to 2048 cells (64 at the midpoint). */
 export function colonyLimitOf(g: number): number {
-  return Math.round(2 + 62 * g * g);
+  return Math.round(2 * Math.pow(1024, g));
 }
 
 /**

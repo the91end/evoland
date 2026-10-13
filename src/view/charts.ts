@@ -91,6 +91,7 @@ export const COLONY_SERIES: [keyof StatsSample, string, string][] = [
   ['mixedColonies', 'Mixed-species colonies', '#f0a3d8'],
   ['cheaters', 'Cheaters', '#ff5d5d'],
   ['guests', 'Guests inside hosts', '#9be36b'],
+  ['bodies', 'Big organisms', '#ffd166'],
 ];
 
 /** Colonies, partnerships, cheaters and guests over time. */
@@ -100,14 +101,14 @@ export function drawColonies(canvas: HTMLCanvasElement, history: StatsSample[]):
   const h = canvas.clientHeight;
   const hist = history.filter((s) => s.bonded !== undefined);
   if (hist.length < 2) return;
-  const maxY = Math.max(1, ...hist.map((s) => Math.max(...COLONY_SERIES.map(([k]) => s[k] as number)))) * 1.05;
+  const maxY = Math.max(1, ...hist.map((s) => Math.max(...COLONY_SERIES.map(([k]) => (s[k] as number) ?? 0)))) * 1.05;
   const x = (k: number) => (k / (hist.length - 1)) * w;
   const y = (v: number) => h - (v / maxY) * h;
   for (const [key, , col] of COLONY_SERIES) {
     g.beginPath();
     g.strokeStyle = col;
     g.lineWidth = 1.5;
-    for (let k = 0; k < hist.length; k++) g.lineTo(x(k), y(hist[k][key] as number));
+    for (let k = 0; k < hist.length; k++) g.lineTo(x(k), y((hist[k][key] as number) ?? 0));
     g.stroke();
   }
   axes(g, w, h, maxY, hist[hist.length - 1].tick);

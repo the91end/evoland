@@ -356,3 +356,11 @@ dialog menu {
 #rate {
   min-width: 6.5em;
 }
+
+.tissueBar {
+  display: flex;
+  height: 14px;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 4px 0 6px;
+}
