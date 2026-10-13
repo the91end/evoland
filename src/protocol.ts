@@ -9,7 +9,10 @@ export type ToWorker =
   /** Live parameter changes, applied to the running world. */
   | { type: 'params'; params: Partial<Params> }
   | { type: 'pause'; paused: boolean }
-  | { type: 'inspect'; id: number | null };
+  | { type: 'inspect'; id: number | null }
+  /** Save the whole pond to a file, or replace it with one. */
+  | { type: 'save' }
+  | { type: 'load'; data: ArrayBuffer };
 
 /** One rendered frame of the world, sent with transferable buffers. */
 export interface Frame {
@@ -167,4 +170,11 @@ export interface CellDetail {
   pos: [number, number, number];
 }
 
-export type FromWorker = Frame | Stats | CellDetail | BodyDetail | { type: 'ready'; params: Params };
+export type FromWorker =
+  | Frame
+  | Stats
+  | CellDetail
+  | BodyDetail
+  | { type: 'ready'; params: Params; seed: string; loaded: boolean }
+  | { type: 'saved'; data: ArrayBuffer; tick: number }
+  | { type: 'loadFailed'; message: string };

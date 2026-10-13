@@ -263,3 +263,29 @@ describe('development', () => {
     expect(w.bodiesFormed).toBeGreaterThan(0);
   });
 });
+
+describe('save and load', () => {
+  it('carries on exactly as the saved pond would have', async () => {
+    const { saveWorld, loadWorld } = await import('../src/sim/save');
+    const a = new World('save', SMALL);
+    for (let t = 0; t < 120; t++) a.step();
+    const file = await saveWorld(a);
+    const b = await loadWorld(file);
+    expect(b.tick).toBe(a.tick);
+    expect(b.checksum()).toBe(a.checksum());
+    for (let t = 0; t < 120; t++) {
+      a.step();
+      b.step();
+    }
+    expect(b.checksum()).toBe(a.checksum());
+    expect(b.speciesTracker.list().length).toBe(a.speciesTracker.list().length);
+  });
+});
+
+describe('zip', () => {
+  it('round-trips one stored file', async () => {
+    const { zipOne, unzipOne } = await import('../src/zip');
+    const data = new Uint8Array([1, 2, 3, 250, 0, 7]);
+    expect(Array.from(unzipOne(zipOne('pond.evoland', data)))).toEqual(Array.from(data));
+  });
+});

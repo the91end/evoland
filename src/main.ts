@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import './style.css';
 import { FLAGELLUM_MIN, Pond, TYPE_COLOURS, type ColourMode } from './view/pond';
 import { drawOrganism, organismCellAt } from './view/organism';
+import { unzipOne, zipOne } from './zip';
 import { COLONY_SERIES, drawColonies, drawFeeding, drawPopulation, drawTypes } from './view/charts';
 import { DEFAULT_PARAMS, type Params } from './sim/params';
 import { CELL_TYPES, GENE_NAMES, OUTPUT_NAMES } from './sim/genome';
@@ -52,6 +53,14 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
   switch (m.type) {
     case 'ready':
       params = m.params;
+      if (m.loaded) onLoaded(m.seed);
+      break;
+    case 'saved':
+      download(m.data, m.tick);
+      break;
+    case 'loadFailed':
+      flash('loadBtn', 'Load', 'Not a save file');
+      alert(`Could not load that file: ${m.message}`);
       break;
     case 'frame':
       pond.pushFrame(m);
@@ -70,6 +79,81 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       break;
   }
 };
+
+// ---------------------------------------------------------------------------
+// Save and load
+// ---------------------------------------------------------------------------
+
+/** Shows a short message on a button, then puts its label back. */
+function flash(id: string, label: string, msg: string): void {
+  $(id).textContent = msg;
+  setTimeout(() => ($(id).textContent = label), 1800);
+}
+
+$('saveBtn').addEventListener('click', () => {
+  $('saveBtn').textContent = 'Saving…';
+  send({ type: 'save' });
+});
+
+async function download(data: ArrayBuffer, tick: number): Promise<void> {
+  const filename = `evoland-seed-${seed}-tick-${tick}.zip`;
+  const blob = new Blob([zipOne('pond.evoland', new Uint8Array(data)) as Uint8Array<ArrayBuffer>]);
+  // On claude.ai the page asks the viewer through the downloads capability;
+  // elsewhere (local dev, GitHub Pages) a plain download link works.
+  const host = (window as unknown as { claude?: { use(name: string): Promise<unknown> } }).claude;
+  const downloads = (host ? await host.use('downloads').catch(() => null) : null) as {
+    save(r: { filename: string; data: Blob }): Promise<unknown>;
+  } | null;
+  if (downloads) {
+    try {
+      await downloads.save({ filename, data: blob });
+      flash('saveBtn', 'Save', 'Saved');
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      flash('saveBtn', 'Save', code === 'declined' ? 'Not saved' : 'Save failed');
+    }
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  flash('saveBtn', 'Save', 'Saved');
+}
+
+$('loadBtn').addEventListener('click', () => $<HTMLInputElement>('loadFile').click());
+$<HTMLInputElement>('loadFile').addEventListener('change', async (e) => {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+  $('loadBtn').textContent = 'Loading…';
+  let data: ArrayBuffer;
+  try {
+    data = unzipOne(new Uint8Array(await file.arrayBuffer())).slice().buffer;
+  } catch (err) {
+    flash('loadBtn', 'Load', 'Not a save file');
+    alert(`Could not load that file: ${(err as Error).message}`);
+    return;
+  }
+  worker.postMessage({ type: 'load', data } satisfies ToWorker, [data]);
+});
+
+/** A loaded pond brings its own seed and settings; the page follows them. */
+function onLoaded(loadedSeed: string): void {
+  seed = loadedSeed;
+  pond.build(params);
+  speciesColours.clear();
+  closeInspector();
+  $<HTMLInputElement>('seed').value = seed;
+  buildTune();
+  send({ type: 'speed', speed: currentSpeed() });
+  send({ type: 'pause', paused });
+  flash('loadBtn', 'Load', 'Loaded');
+}
 
 function start(): void {
   params = { ...DEFAULT_PARAMS, ...overrides };

@@ -4,6 +4,7 @@
  * frames back. The page only draws.
  */
 import { World, bodyCells } from './sim/world';
+import { loadWorld, saveWorld } from './sim/save';
 import { GENE_COUNT, OUTPUTS, SWITCHES, traitsOf } from './sim/genome';
 import type { BodyFrame, CellDetail, Frame, FromWorker, OrganismDetail, Stats, ToWorker } from './protocol';
 
@@ -47,16 +48,22 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
   const m = e.data;
   switch (m.type) {
     case 'start':
-      world = new World(m.seed, m.params);
-      owed = 0;
-      lastTime = performance.now();
-      rateStart = lastTime;
-      rateTicks = 0;
-      inspectId = null;
-      post({ type: 'ready', params: world.p });
-      sendFrame();
-      sendStats();
-      schedule(0);
+      begin(new World(m.seed, m.params), false);
+      break;
+    case 'save':
+      if (world) {
+        const tick = world.tick;
+        saveWorld(world).then((bytes) => {
+          const data = bytes.buffer as ArrayBuffer;
+          post({ type: 'saved', data, tick }, [data]);
+        });
+      }
+      break;
+    case 'load':
+      loadWorld(new Uint8Array(m.data)).then(
+        (w) => begin(w, true),
+        (err: unknown) => post({ type: 'loadFailed', message: err instanceof Error ? err.message : String(err) }),
+      );
       break;
     case 'speed':
       speed = m.speed;
@@ -76,6 +83,19 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
   }
 };
+
+function begin(w: World, loaded: boolean): void {
+  world = w;
+  owed = 0;
+  lastTime = performance.now();
+  rateStart = lastTime;
+  rateTicks = 0;
+  inspectId = null;
+  post({ type: 'ready', params: w.p, seed: w.seed, loaded });
+  sendFrame();
+  sendStats();
+  schedule(0);
+}
 
 function schedule(delay: number): void {
   if (scheduled) return;
