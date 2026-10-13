@@ -32,6 +32,8 @@ export interface Params {
   kBasal: number;
   /** Swimming cost per tick = kSwim * force^2 * radius^2. */
   kSwim: number;
+  /** Flagellum upkeep per tick, even at rest = kFlagellum * motility * radius^2. */
+  kFlagellum: number;
   /** Light gain per tick at full sun = kLight * eff * radius^2. */
   kLight: number;
   /** Vent gain per tick at full food = kVent * eff * radius^2. */
@@ -108,6 +110,7 @@ export const DEFAULT_PARAMS: Params = {
   energyPerVolume: 5,
   kBasal: 0.004,
   kSwim: 0.005,
+  kFlagellum: 0.001,
   kLight: 0.1,
   kVent: 0.4,
   lightPerColumn: 0.45,

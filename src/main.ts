@@ -448,6 +448,7 @@ const LIVE: [keyof Params, string, number, number][] = [
   ['ventCount', 'Vents', 0, 15],
   ['kBasal', 'Basal cost', 0, 0.02],
   ['kSwim', 'Swimming cost', 0, 0.03],
+  ['kFlagellum', 'Flagellum upkeep', 0, 0.01],
   ['engulfGain', 'Engulf energy gain', 0, 1],
   ['debrisFraction', 'Energy left as debris', 0, 1],
   ['divisionLoss', 'Energy lost dividing', 0, 0.5],

@@ -416,6 +416,8 @@ export class World {
       g[Gene.Policing] = clamp01(0.05 + rng.gauss() * 0.02);
       // Sex is rare to begin with; switch weights start near 0.5 (no effect).
       g[Gene.Sex] = clamp01(0.1 + rng.gauss() * 0.03);
+      // No flagellum yet: the first cells drift, and swimming has to evolve.
+      g[Gene.Motility] = clamp01(0.02 + rng.gauss() * 0.01);
       g[Gene.LikeR] = g[Gene.TagR];
       g[Gene.LikeG] = g[Gene.TagG];
       g[Gene.LikeB] = g[Gene.TagB];
@@ -882,7 +884,8 @@ export class World {
     this.energy[i] = Math.min(this.maxE[i], this.energy[i] + gain);
 
     // ---- pay ----
-    this.energy[i] -= p.kBasal * r2 + p.kSwim * f * f * r2 + p.kBond * this.bondCount[i];
+    // A flagellum costs upkeep even at rest, on top of the work of swimming.
+    this.energy[i] -= (p.kBasal + p.kFlagellum * this.mot[i]) * r2 + p.kSwim * f * f * r2 + p.kBond * this.bondCount[i];
     this.age[i]++;
     if (this.cooldown[i] > 0) this.cooldown[i]--;
     if (this.engulfCd[i] > 0) this.engulfCd[i]--;
@@ -1716,7 +1719,7 @@ export class World {
     if (effE > 0.05) this.bodyHunt(b, effE, maxE);
 
     // ---- pay ----
-    b.energy -= cells * (p.kBasal * r2 + p.kBond * 2) + p.kSwim * swim * swim * r2 * cells;
+    b.energy -= cells * ((p.kBasal + p.kFlagellum * t.motility) * r2 + p.kBond * 2) + p.kSwim * swim * swim * r2 * cells;
     b.age++;
     if (b.energy <= 0 || b.age > b.lifespan) {
       this.killBody(b);
