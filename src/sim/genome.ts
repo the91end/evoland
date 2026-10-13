@@ -38,16 +38,17 @@ export const Gene = {
 } as const;
 
 /**
- * The gene switch network. Each of the 4 switches reads 9 inputs (bond
+ * The gene switch network. Each of the 4 switches reads 10 inputs (bond
  * count, partners' signal, energy, light, age, a constant, developmental
- * stage, height within the body, its own last state) and pushes 6 outputs.
+ * stage, height within the body, distance from the body's centre, its own
+ * last state) and pushes 6 outputs.
  * Stage and height are what let a body plan unfold the same way each
  * generation: a cell knows how many divisions it is from the egg and
- * whether it sits at the top or bottom of the body. A switch's 13 weights sit together so sex
+ * whether it sits at the top or bottom, inside or outside of the body. A switch's 13 weights sit together so sex
  * passes them on as one block.
  */
 export const SWITCHES = 4;
-export const SWITCH_INPUTS = 9;
+export const SWITCH_INPUTS = 10;
 export const OUTPUTS = 6;
 export const SWITCH_BLOCK = SWITCH_INPUTS + OUTPUTS;
 export const SWITCH_BASE = 24;
@@ -57,7 +58,7 @@ export const GENE_COUNT = SWITCH_BASE + SWITCHES * SWITCH_BLOCK;
 
 /** What the switch outputs change, in output order. */
 export const Output = { Feed: 0, Swim: 1, Adhere: 2, Defend: 3, Divide: 4, Germ: 5 } as const;
-export const INPUT_NAMES = ['bonds', 'signal', 'energy', 'light', 'age', 'bias', 'stage', 'height', 'self'];
+export const INPUT_NAMES = ['bonds', 'signal', 'energy', 'light', 'age', 'bias', 'stage', 'height', 'outside', 'self'];
 export const OUTPUT_NAMES = ['feeding', 'swimming', 'adhesion', 'defence', 'dividing', 'germ'];
 
 export const GENE_NAMES: string[] = [
@@ -155,8 +156,8 @@ export function colonyLimitOf(g: number): number {
 }
 
 /**
- * Runs one cell's switch network. Reads `inputs` (the first 8 switch
- * inputs; the 9th is each switch's own state), updates `state[so..so+4)`
+ * Runs one cell's switch network. Reads `inputs` (the first 9 switch
+ * inputs; the 10th is each switch's own state), updates `state[so..so+4)`
  * in place and writes the 6 outputs to `out[oo..oo+6)`. Outputs share a
  * fixed budget: their sizes never add up to more than 1, so a cell that
  * boosts one thing has less to give everything else.
@@ -172,8 +173,8 @@ export function runSwitches(
 ): void {
   for (let s = 0; s < SWITCHES; s++) {
     const b = o + SWITCH_BASE + s * SWITCH_BLOCK;
-    let sum = (2 * g[b + 8] - 1) * state[so + s];
-    for (let k = 0; k < 8; k++) sum += (2 * g[b + k] - 1) * inputs[k];
+    let sum = (2 * g[b + 9] - 1) * state[so + s];
+    for (let k = 0; k < 9; k++) sum += (2 * g[b + k] - 1) * inputs[k];
     state[so + s] = 1 / (1 + Math.exp(-4 * sum));
   }
   let total = 0;

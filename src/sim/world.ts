@@ -169,12 +169,15 @@ export class World {
   readonly stage: Uint16Array;
   readonly divUp: Float32Array;
   readonly divSpread: Float32Array;
-  /** Per colony root: mean height and how far its cells reach from it. */
+  /** Per colony root: centre (offset from the root cell, so wrapping is safe) and reach. */
+  private readonly colonyX: Float32Array;
   private readonly colonyY: Float32Array;
+  private readonly colonyZ: Float32Array;
   private readonly colonyExt: Float32Array;
+  private readonly colonyReach: Float32Array;
   /** Per colony root: live cell count, kept up to date as cells are born within a tick. */
   private readonly colonyLive: Int32Array;
-  private readonly inputs = new Float32Array(8);
+  private readonly inputs = new Float32Array(9);
 
   // ---- bonds: up to maxBonds slots per cell, by cell index ----
   readonly mb: number;
@@ -292,8 +295,11 @@ export class World {
     this.stage = new Uint16Array(cap);
     this.divUp = new Float32Array(cap);
     this.divSpread = new Float32Array(cap);
+    this.colonyX = new Float32Array(cap);
     this.colonyY = new Float32Array(cap);
+    this.colonyZ = new Float32Array(cap);
     this.colonyExt = new Float32Array(cap);
+    this.colonyReach = new Float32Array(cap);
     this.colonyLive = new Int32Array(cap);
 
     const mb = (this.mb = p.maxBonds);
@@ -874,7 +880,12 @@ export class World {
     if (nb > 0) {
       const c = this.colony[i];
       inp[7] = clamp((this.y[i] - this.colonyY[c]) / Math.max(this.colonyExt[c], this.radius[i]), -1, 1);
-    } else inp[7] = 0;
+      // 0 at the centre of the body, 1 on its outer surface.
+      inp[8] = Math.min(1, this.centreDistance(i, c) / Math.max(this.colonyReach[c], this.radius[i]));
+    } else {
+      inp[7] = 0;
+      inp[8] = 1;
+    }
     runSwitches(this.genes, i * GENE_COUNT, inp, this.sw, i * SWITCHES, this.out, i * OUTPUTS);
     // The first switch drives the signal partners hear next tick.
     this.signal[i] = this.signalG[i] * this.sw[i * SWITCHES];
@@ -1194,13 +1205,17 @@ export class World {
       let top = 0;
       let size = 0;
       let vol = 0;
+      let sx = 0;
       let sy = 0;
+      let sz = 0;
       stack[top++] = i;
       while (top > 0) {
         const a = stack[--top];
         size++;
         vol += this.radius[a] ** 3;
+        sx += wrapDelta(this.x[a] - this.x[i], this.p.width);
         sy += this.y[a];
+        sz += wrapDelta(this.z[a] - this.z[i], this.p.width);
         for (let s = 0; s < this.bondCount[a]; s++) {
           const b = this.bondTo[a * mb + s];
           if (colony[b] < 0) {
@@ -1211,8 +1226,11 @@ export class World {
       }
       this.colonySize[i] = size;
       this.colonyVolume[i] = vol;
+      this.colonyX[i] = sx / size;
       this.colonyY[i] = sy / size;
+      this.colonyZ[i] = sz / size;
       this.colonyExt[i] = 0;
+      this.colonyReach[i] = 0;
       this.colonyLive[i] = size;
     }
     for (let i = 0; i < n; i++) {
@@ -1220,7 +1238,19 @@ export class World {
       this.colonySize[i] = this.colonySize[c];
       const d = Math.abs(this.y[i] - this.colonyY[c]);
       if (d > this.colonyExt[c]) this.colonyExt[c] = d;
+      const r = this.centreDistance(i, c);
+      if (r > this.colonyReach[c]) this.colonyReach[c] = r;
     }
+  }
+
+  /** How far cell i sits from the centre of colony c (rooted at cell c). */
+  private centreDistance(i: number, c: number): number {
+    const W = this.p.width;
+    return Math.hypot(
+      wrapDelta(this.x[i] - this.x[c], W) - this.colonyX[c],
+      this.y[i] - this.colonyY[c],
+      wrapDelta(this.z[i] - this.z[c], W) - this.colonyZ[c],
+    );
   }
 
   /** Radius of the whole colony a cell belongs to, as one ball of the same volume. */

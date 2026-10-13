@@ -200,7 +200,7 @@ describe('multicellular genes', () => {
     const out = new Float32Array(OUTPUTS);
     for (let t = 0; t < 50; t++) {
       for (let k = 0; k < GENE_COUNT; k++) g[k] = r.next();
-      runSwitches(g, 0, [r.next(), r.next(), r.next(), r.next(), r.next(), 1, r.next(), 2 * r.next() - 1], state, 0, out, 0);
+      runSwitches(g, 0, [r.next(), r.next(), r.next(), r.next(), r.next(), 1, r.next(), 2 * r.next() - 1, r.next()], state, 0, out, 0);
       expect(out.reduce((s, v) => s + Math.abs(v), 0)).toBeLessThanOrEqual(1 + 1e-6);
     }
   });
