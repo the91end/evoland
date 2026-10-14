@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "headless": "vite-node scripts/headless.ts",
-    "artifact": "vite build && node scripts/artifact.mjs"
+    "artifact": "vite build && node scripts/artifact.mjs",
+    "pages": "vite build && node scripts/artifact.mjs docs/index.html --page"
   },
   "dependencies": {
     "three": "^0.186.1"
