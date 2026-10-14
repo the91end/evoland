@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import './style.css';
 import { FLAGELLUM_MIN, Pond, TYPE_COLOURS, type ColourMode } from './view/pond';
-import { drawOrganism, organismCellAt } from './view/organism';
+import { drawOrganism, organismCanvas } from './view/organism';
 import { unzipOne, zipOne } from './zip';
 import { COLONY_SERIES, drawColonies, drawFamilyTree, drawFeeding, drawPopulation, drawTypes } from './view/charts';
 import { DEFAULT_PARAMS, type Params } from './sim/params';
@@ -491,8 +491,9 @@ function showInspector(d: CellDetail): void {
     const label = org.cells.length >= 3 && kinds >= 2 ? 'Multicellular organism' : 'Colony';
     html +=
       `<h2>${label}: ${org.cells.length}${org.truncated ? '+' : ''} cells, ${kinds} cell type${kinds > 1 ? 's' : ''}</h2>` +
-      '<canvas id="orgCanvas"></canvas>' +
-      '<p class="muted small">Tap a cell in the drawing to inspect it. Ring = this cell, bright wall = bond, faint = low energy, wavy line = flagellum.</p>' +
+      '<div id="orgSlot"></div>' +
+      '<p class="muted small">Drag to turn it, scroll or pinch to zoom, double click to reset. Tap a cell to inspect it. ' +
+      'Ring = this cell, bright wall = bond, faint = low energy, wavy line = flagellum.</p>' +
       '<div class="legend">' +
       counts
         .map((c, k) => (c ? `<span><i style="background:${TYPE_COLOURS[k]}"></i>${CELL_TYPES[k]} ${c}</span>` : ''))
@@ -527,16 +528,14 @@ function showInspector(d: CellDetail): void {
   }
   $('inspBody').innerHTML = html;
   if (org) {
-    const c = $<HTMLCanvasElement>('orgCanvas');
-    drawOrganism(c, org, TYPE_COLOURS, $('inspBody').clientWidth || 280);
-    c.addEventListener('click', (e) => {
-      const r = c.getBoundingClientRect();
-      const id = organismCellAt(e.clientX - r.left, e.clientY - r.top);
-      if (id !== null && id !== pond.followId) {
+    const c = organismCanvas((id) => {
+      if (id !== pond.followId) {
         pond.followId = id;
         send({ type: 'inspect', id });
       }
     });
+    $('orgSlot').appendChild(c);
+    drawOrganism(org, TYPE_COLOURS, $('inspBody').clientWidth || 280);
   }
 }
 
