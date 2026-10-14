@@ -802,12 +802,15 @@ export class World {
           this.swaps++;
         }
         // Friends may bond; the other cell's view doesn't matter, which is
-        // the opening a tag-mimicking cheater uses.
+        // the opening a tag-mimicking cheater uses. Two single cells can
+        // start a colony, and touching cells of the same body stick to
+        // each other like tissue; separate bodies never merge.
+        const single = this.bondCount[i] === 0 && this.bondCount[j] === 0;
+        const sameBody = this.bondCount[i] > 0 && this.bondCount[j] > 0 && this.colony[i] === this.colony[j];
         if (
           !isGamete &&
           this.gamete[j] === 0 &&
-          this.bondCount[i] === 0 &&
-          this.bondCount[j] === 0 &&
+          (single || sameBody) &&
           this.noBond[i] === 0 &&
           this.noBond[j] === 0 &&
           this.bondCount[i] < this.mb &&
