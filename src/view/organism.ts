@@ -9,9 +9,41 @@ const layout = new Map<number, V3>();
 let hit: { id: number; x: number; y: number; r: number }[] = [];
 
 /** How the viewer has turned and zoomed the drawing; kept while the same organism is shown. */
-const view = { yaw: 0.5, pitch: 0.35, zoom: 1, panX: 0, panY: 0 };
+const view = { rot: [1, 0, 0, 0, 1, 0, 0, 0, 1], zoom: 1, panX: 0, panY: 0 };
 function resetView(): void {
-  Object.assign(view, { yaw: 0.5, pitch: 0.35, zoom: 1, panX: 0, panY: 0 });
+  Object.assign(view, { rot: [1, 0, 0, 0, 1, 0, 0, 0, 1], zoom: 1, panX: 0, panY: 0 });
+  turn(0.5, 0.35);
+}
+resetView();
+
+/**
+ * Turns the organism about the screen's up axis by `yaw` and then its
+ * sideways axis by `pitch`. Turning always happens relative to the screen,
+ * so no angle ever runs into a limit.
+ */
+function turn(yaw: number, pitch: number): void {
+  const cy = Math.cos(yaw);
+  const sy = Math.sin(yaw);
+  const cp = Math.cos(pitch);
+  const sp = Math.sin(pitch);
+  // Rows of (pitch about x) times (yaw about y).
+  const t = [cy, 0, -sy, -sp * sy, cp, -sp * cy, cp * sy, sp, cp * cy];
+  const r = view.rot;
+  const out = new Array<number>(9);
+  for (let i = 0; i < 3; i++)
+    for (let j = 0; j < 3; j++) out[i * 3 + j] = t[i * 3] * r[j] + t[i * 3 + 1] * r[3 + j] + t[i * 3 + 2] * r[6 + j];
+  // Keep the rows unit length and square to each other so rounding never skews it.
+  const row = (i: number) => out.slice(i * 3, i * 3 + 3);
+  const norm = (v: number[]) => {
+    const l = Math.hypot(v[0], v[1], v[2]) || 1;
+    return v.map((x) => x / l);
+  };
+  const a = norm(row(0));
+  let b = row(1);
+  const d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  b = norm(b.map((x, k) => x - d * a[k]));
+  const c = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  view.rot = [...a, ...b, ...c];
 }
 
 /** The last thing drawn, so turning and zooming can redraw without new data. */
@@ -57,6 +89,13 @@ function pinchState(): { d: number; mx: number; my: number } {
 // contents while a drag goes on, which would drop a pointer capture.
 canvas.addEventListener('pointerdown', (e) => {
   e.preventDefault();
+  // A first finger or mouse press starts a new gesture: forget any pointer
+  // whose release never reached us (let go outside the window, or a touch
+  // the browser dropped), or it would leave the view stuck mid pinch.
+  if (e.isPrimary) {
+    pointers.clear();
+    pinch = null;
+  }
   pointers.set(e.pointerId, local(e));
   if (pointers.size === 1) dragged = false;
   if (pointers.size === 2) {
@@ -68,6 +107,11 @@ canvas.addEventListener('pointerdown', (e) => {
 window.addEventListener('pointermove', (e) => {
   const prev = pointers.get(e.pointerId);
   if (!prev) return;
+  // A mouse with no button held has been let go somewhere we did not hear.
+  if (e.pointerType === 'mouse' && e.buttons === 0) {
+    release(e);
+    return;
+  }
   const p = local(e);
   pointers.set(e.pointerId, p);
   if (pointers.size >= 2 && pinch) {
@@ -84,8 +128,7 @@ window.addEventListener('pointermove', (e) => {
       return;
     }
     dragged = true;
-    view.yaw += dx * 0.01;
-    view.pitch = Math.max(-1.55, Math.min(1.55, view.pitch + dy * 0.01));
+    turn(dx * 0.01, dy * 0.01);
   }
   render();
 });
@@ -103,6 +146,11 @@ function release(e: PointerEvent): void {
 }
 window.addEventListener('pointerup', release);
 window.addEventListener('pointercancel', release);
+window.addEventListener('blur', () => {
+  pointers.clear();
+  pinch = null;
+  canvas.style.cursor = 'grab';
+});
 canvas.addEventListener(
   'wheel',
   (e) => {
@@ -234,20 +282,16 @@ function render(): void {
   const span = 1.15 * bondLen;
   const fit = Math.min((width - 2 * pad) / (2 * reach + span), (h - 2 * pad) / (2 * reach + span), 44 / bondLen);
   const scale = fit * view.zoom;
-  const cy = Math.cos(view.yaw);
-  const sy = Math.sin(view.yaw);
-  const cp = Math.cos(view.pitch);
-  const sp = Math.sin(view.pitch);
+  const m = view.rot;
   const eye = 4 * (reach + bondLen);
   // Screen x, y, a perspective factor, and depth toward the viewer (-1 far to +1 near).
   const proj = pos.map((p) => {
     const x0 = p.x - mx;
     const y0 = p.y - my;
     const z0 = p.z - mz;
-    const x1 = x0 * cy - z0 * sy;
-    const z1 = x0 * sy + z0 * cy;
-    const y2 = y0 * cp - z1 * sp;
-    const z2 = y0 * sp + z1 * cp;
+    const x1 = m[0] * x0 + m[1] * y0 + m[2] * z0;
+    const y2 = m[3] * x0 + m[4] * y0 + m[5] * z0;
+    const z2 = m[6] * x0 + m[7] * y0 + m[8] * z0;
     const f = eye / Math.max(eye * 0.2, eye - z2);
     return {
       x: width / 2 + view.panX + x1 * scale * f,
