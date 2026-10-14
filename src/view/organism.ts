@@ -1,0 +1,173 @@
+import type { OrganismDetail } from '../protocol';
+import { FLAGELLUM_MIN } from './pond';
+
+/** Remembered 2D layout per cell id, so the drawing stays steady between updates. */
+const layout = new Map<number, { x: number; y: number }>();
+/** Screen positions of the last drawing, for tapping a cell. */
+let hit: { id: number; x: number; y: number; r: number }[] = [];
+
+/**
+ * Draws an organism as a flat map: one dot per cell in its cell type
+ * colour (brighter when fuller), packed so bonded cells touch, with a
+ * dark wall where each bond joins two cells and a ring on the inspected cell. A small spring layout keeps bonded cells together.
+ */
+export function drawOrganism(canvas: HTMLCanvasElement, org: OrganismDetail, colours: string[], width: number): void {
+  const cells = org.cells;
+  const n = cells.length;
+  const pos = cells.map((c, k) => {
+    const old = layout.get(c.id);
+    if (old) return { ...old };
+    // New cells start beside a bonded cell that already has a place.
+    const link = org.bonds.find(([a, b]) => (a === k && layout.has(cells[b].id)) || (b === k && layout.has(cells[a].id)));
+    const other = link ? (link[0] === k ? link[1] : link[0]) : -1;
+    const base = other >= 0 ? layout.get(cells[other].id)! : { x: 0, y: 0 };
+    return { x: base.x + Math.cos(k * 2.4) * 0.8, y: base.y + Math.sin(k * 2.4) * 0.8 };
+  });
+  const fx = new Float64Array(n);
+  const fy = new Float64Array(n);
+  for (let it = 0; it < 60; it++) {
+    fx.fill(0);
+    fy.fill(0);
+    for (let a = 0; a < n; a++)
+      for (let b = a + 1; b < n; b++) {
+        const dx = pos[b].x - pos[a].x;
+        const dy = pos[b].y - pos[a].y;
+        const d2 = dx * dx + dy * dy + 0.01;
+        const f = 0.3 / d2;
+        fx[a] -= dx * f;
+        fy[a] -= dy * f;
+        fx[b] += dx * f;
+        fy[b] += dy * f;
+      }
+    for (const [a, b] of org.bonds) {
+      const dx = pos[b].x - pos[a].x;
+      const dy = pos[b].y - pos[a].y;
+      const d = Math.hypot(dx, dy) || 0.01;
+      const f = (0.5 * (d - 1)) / d;
+      fx[a] += dx * f;
+      fy[a] += dy * f;
+      fx[b] -= dx * f;
+      fy[b] -= dy * f;
+    }
+    for (let k = 0; k < n; k++) {
+      pos[k].x += Math.max(-0.3, Math.min(0.3, fx[k] * 0.3));
+      pos[k].y += Math.max(-0.3, Math.min(0.3, fy[k] * 0.3));
+    }
+  }
+  cells.forEach((c, k) => layout.set(c.id, pos[k]));
+  if (layout.size > 4000) layout.clear();
+
+  const h = Math.max(140, Math.min(260, width * 0.75));
+  const dpr = Math.min(window.devicePixelRatio, 2);
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${h}px`;
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(h * dpr);
+  const g = canvas.getContext('2d')!;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  let minX = Infinity,
+    maxX = -Infinity,
+    minY = Infinity,
+    maxY = -Infinity;
+  for (const p of pos) {
+    minX = Math.min(minX, p.x);
+    maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y);
+    maxY = Math.max(maxY, p.y);
+  }
+  // Cells are drawn just big enough to touch their bonded neighbours.
+  let bondLen = 0;
+  for (const [a, b] of org.bonds) bondLen += Math.hypot(pos[b].x - pos[a].x, pos[b].y - pos[a].y);
+  bondLen = org.bonds.length ? bondLen / org.bonds.length : 1;
+  const pad = 6;
+  const span = 1.15 * bondLen;
+  const scale = Math.min(
+    (width - 2 * pad) / (maxX - minX + span),
+    (h - 2 * pad) / (maxY - minY + span),
+    44 / bondLen,
+  );
+  const ox = width / 2 - ((minX + maxX) / 2) * scale;
+  const oy = h / 2 - ((minY + maxY) / 2) * scale;
+  const sx = (k: number) => ox + pos[k].x * scale;
+  const sy = (k: number) => oy + pos[k].y * scale;
+  const unit = 0.6 * bondLen * scale;
+  const rad = (k: number) => unit * (0.85 + 0.15 * (cells[k].radius / 4));
+
+  hit = [];
+  // Flagella first, pointing away from the body's middle, so cells sit on top.
+  const mx = pos.reduce((s, p) => s + p.x, 0) / n;
+  const my = pos.reduce((s, p) => s + p.y, 0) / n;
+  g.strokeStyle = 'rgba(207,233,242,0.85)';
+  g.lineCap = 'round';
+  cells.forEach((c, k) => {
+    if (c.motility < FLAGELLUM_MIN) return;
+    const r = rad(k);
+    let dx = pos[k].x - mx;
+    let dy = pos[k].y - my;
+    const d = Math.hypot(dx, dy);
+    if (d < 1e-3) [dx, dy] = [0, 1];
+    else [dx, dy] = [dx / d, dy / d];
+    const len = r * (1.2 + 2.5 * c.motility);
+    g.lineWidth = 1 + 1.5 * c.motility;
+    g.beginPath();
+    g.moveTo(sx(k) + dx * r, sy(k) + dy * r);
+    // A gentle wave so it reads as a flagellum, not a stick.
+    g.quadraticCurveTo(
+      sx(k) + dx * (r + len * 0.5) - dy * len * 0.25,
+      sy(k) + dy * (r + len * 0.5) + dx * len * 0.25,
+      sx(k) + dx * (r + len),
+      sy(k) + dy * (r + len),
+    );
+    g.stroke();
+  });
+  // Cell bodies, each with a membrane edge.
+  cells.forEach((c, k) => {
+    const r = rad(k);
+    g.globalAlpha = 0.45 + 0.55 * c.energy;
+    g.fillStyle = colours[c.type];
+    g.beginPath();
+    g.arc(sx(k), sy(k), r, 0, Math.PI * 2);
+    g.fill();
+    g.globalAlpha = 1;
+    g.strokeStyle = 'rgba(220,240,250,0.35)';
+    g.lineWidth = 1;
+    g.stroke();
+    hit.push({ id: c.id, x: sx(k), y: sy(k), r: r + 2 });
+  });
+  // Bonds are the shared walls where two touching cells meet.
+  g.strokeStyle = 'rgba(225,245,255,0.9)';
+  g.lineWidth = Math.max(1.5, unit * 0.12);
+  g.beginPath();
+  for (const [a, b] of org.bonds) {
+    const dx = sx(b) - sx(a);
+    const dy = sy(b) - sy(a);
+    const d = Math.hypot(dx, dy) || 1;
+    const half = 0.75 * Math.min(rad(a), rad(b));
+    const t = rad(a) / (rad(a) + rad(b));
+    const wx = sx(a) + dx * t;
+    const wy = sy(a) + dy * t;
+    g.moveTo(wx - (dy / d) * half, wy + (dx / d) * half);
+    g.lineTo(wx + (dy / d) * half, wy - (dx / d) * half);
+  }
+  g.stroke();
+  // Ring on the inspected cell.
+  g.strokeStyle = '#ffffff';
+  g.lineWidth = 2;
+  g.beginPath();
+  g.arc(sx(0), sy(0), rad(0) + 2, 0, Math.PI * 2);
+  g.stroke();
+}
+
+/** The cell id under a point on the organism drawing, or null. */
+export function organismCellAt(x: number, y: number): number | null {
+  let best: number | null = null;
+  let bestD = Infinity;
+  for (const p of hit) {
+    const d = Math.hypot(p.x - x, p.y - y);
+    if (d < p.r && d < bestD) {
+      bestD = d;
+      best = p.id;
+    }
+  }
+  return best;
+}
