@@ -8,8 +8,8 @@ let hit: { id: number; x: number; y: number; r: number }[] = [];
 
 /**
  * Draws an organism as a flat map: one dot per cell in its cell type
- * colour (brighter when fuller), lines for bonds, and a ring on the
- * inspected cell. A small spring layout keeps bonded cells together.
+ * colour (brighter when fuller), packed so bonded cells touch, with a
+ * dark wall where each bond joins two cells and a ring on the inspected cell. A small spring layout keeps bonded cells together.
  */
 export function drawOrganism(canvas: HTMLCanvasElement, org: OrganismDetail, colours: string[], width: number): void {
   const cells = org.cells;
@@ -75,22 +75,24 @@ export function drawOrganism(canvas: HTMLCanvasElement, org: OrganismDetail, col
     minY = Math.min(minY, p.y);
     maxY = Math.max(maxY, p.y);
   }
-  const pad = 14;
-  const scale = Math.min((width - 2 * pad) / Math.max(1, maxX - minX), (h - 2 * pad) / Math.max(1, maxY - minY), 40);
+  // Cells are drawn just big enough to touch their bonded neighbours.
+  let bondLen = 0;
+  for (const [a, b] of org.bonds) bondLen += Math.hypot(pos[b].x - pos[a].x, pos[b].y - pos[a].y);
+  bondLen = org.bonds.length ? bondLen / org.bonds.length : 1;
+  const pad = 6;
+  const span = 1.15 * bondLen;
+  const scale = Math.min(
+    (width - 2 * pad) / (maxX - minX + span),
+    (h - 2 * pad) / (maxY - minY + span),
+    44 / bondLen,
+  );
   const ox = width / 2 - ((minX + maxX) / 2) * scale;
   const oy = h / 2 - ((minY + maxY) / 2) * scale;
   const sx = (k: number) => ox + pos[k].x * scale;
   const sy = (k: number) => oy + pos[k].y * scale;
-  const dot = Math.max(3, Math.min(9, scale * 0.35));
+  const unit = 0.6 * bondLen * scale;
+  const rad = (k: number) => unit * (0.85 + 0.15 * (cells[k].radius / 4));
 
-  g.strokeStyle = 'rgba(160,210,230,0.45)';
-  g.lineWidth = 1.2;
-  g.beginPath();
-  for (const [a, b] of org.bonds) {
-    g.moveTo(sx(a), sy(a));
-    g.lineTo(sx(b), sy(b));
-  }
-  g.stroke();
   hit = [];
   // Flagella first, pointing away from the body's middle, so cells sit on top.
   const mx = pos.reduce((s, p) => s + p.x, 0) / n;
@@ -99,7 +101,7 @@ export function drawOrganism(canvas: HTMLCanvasElement, org: OrganismDetail, col
   g.lineCap = 'round';
   cells.forEach((c, k) => {
     if (c.motility < FLAGELLUM_MIN) return;
-    const r = dot * (0.6 + 0.4 * (c.radius / 4));
+    const r = rad(k);
     let dx = pos[k].x - mx;
     let dy = pos[k].y - my;
     const d = Math.hypot(dx, dy);
@@ -118,23 +120,42 @@ export function drawOrganism(canvas: HTMLCanvasElement, org: OrganismDetail, col
     );
     g.stroke();
   });
+  // Cell bodies, each with a membrane edge.
   cells.forEach((c, k) => {
-    const r = dot * (0.6 + 0.4 * (c.radius / 4));
+    const r = rad(k);
     g.globalAlpha = 0.45 + 0.55 * c.energy;
     g.fillStyle = colours[c.type];
     g.beginPath();
     g.arc(sx(k), sy(k), r, 0, Math.PI * 2);
     g.fill();
     g.globalAlpha = 1;
-    if (k === 0) {
-      g.strokeStyle = '#ffffff';
-      g.lineWidth = 2;
-      g.beginPath();
-      g.arc(sx(k), sy(k), r + 3, 0, Math.PI * 2);
-      g.stroke();
-    }
-    hit.push({ id: c.id, x: sx(k), y: sy(k), r: r + 4 });
+    g.strokeStyle = 'rgba(220,240,250,0.35)';
+    g.lineWidth = 1;
+    g.stroke();
+    hit.push({ id: c.id, x: sx(k), y: sy(k), r: r + 2 });
   });
+  // Bonds are the shared walls where two touching cells meet.
+  g.strokeStyle = 'rgba(225,245,255,0.9)';
+  g.lineWidth = Math.max(1.5, unit * 0.12);
+  g.beginPath();
+  for (const [a, b] of org.bonds) {
+    const dx = sx(b) - sx(a);
+    const dy = sy(b) - sy(a);
+    const d = Math.hypot(dx, dy) || 1;
+    const half = 0.75 * Math.min(rad(a), rad(b));
+    const t = rad(a) / (rad(a) + rad(b));
+    const wx = sx(a) + dx * t;
+    const wy = sy(a) + dy * t;
+    g.moveTo(wx - (dy / d) * half, wy + (dx / d) * half);
+    g.lineTo(wx + (dy / d) * half, wy - (dx / d) * half);
+  }
+  g.stroke();
+  // Ring on the inspected cell.
+  g.strokeStyle = '#ffffff';
+  g.lineWidth = 2;
+  g.beginPath();
+  g.arc(sx(0), sy(0), rad(0) + 2, 0, Math.PI * 2);
+  g.stroke();
 }
 
 /** The cell id under a point on the organism drawing, or null. */

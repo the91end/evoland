@@ -484,7 +484,7 @@ function showInspector(d: CellDetail): void {
     html +=
       `<h2>${label}: ${org.cells.length}${org.truncated ? '+' : ''} cells, ${kinds} cell type${kinds > 1 ? 's' : ''}</h2>` +
       '<canvas id="orgCanvas"></canvas>' +
-      '<p class="muted small">Tap a cell in the drawing to inspect it. Ring = this cell, faint = low energy, wavy line = flagellum.</p>' +
+      '<p class="muted small">Tap a cell in the drawing to inspect it. Ring = this cell, bright wall = bond, faint = low energy, wavy line = flagellum.</p>' +
       '<div class="legend">' +
       counts
         .map((c, k) => (c ? `<span><i style="background:${TYPE_COLOURS[k]}"></i>${CELL_TYPES[k]} ${c}</span>` : ''))
