@@ -3,11 +3,11 @@ import './style.css';
 import { FLAGELLUM_MIN, Pond, TYPE_COLOURS, type ColourMode } from './view/pond';
 import { drawOrganism, organismCellAt } from './view/organism';
 import { unzipOne, zipOne } from './zip';
-import { COLONY_SERIES, drawColonies, drawFeeding, drawPopulation, drawTypes } from './view/charts';
+import { COLONY_SERIES, drawColonies, drawFamilyTree, drawFeeding, drawPopulation, drawTypes } from './view/charts';
 import { DEFAULT_PARAMS, type Params } from './sim/params';
 import { CELL_TYPES, GENE_NAMES, OUTPUT_NAMES } from './sim/genome';
 import type { SpeciesInfo } from './sim/species';
-import type { BodyDetail, CellDetail, FromWorker, Stats, ToWorker } from './protocol';
+import type { BodyDetail, CellDetail, Frame, FromWorker, Stats, ToWorker } from './protocol';
 import SimWorker from './sim.worker.ts?worker&inline';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -64,7 +64,7 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       break;
     case 'frame':
       pond.pushFrame(m);
-      updateClock(m.tick, m.sun, m.rate, m.n);
+      updateClock(m);
       break;
     case 'stats':
       stats = m;
@@ -216,10 +216,17 @@ $<HTMLInputElement>('seed').addEventListener('keydown', (e) => {
 $('sideBtn').addEventListener('click', () => $('side').classList.toggle('closed'));
 if (window.innerWidth < 760) $('side').classList.add('closed');
 
-function updateClock(tick: number, sun: number, rate: number, n: number): void {
+const SEASONS = ['spring', 'summer', 'autumn', 'winter'];
+
+function updateClock(m: Frame): void {
+  const { tick, sun, rate, n } = m;
   const day = Math.floor(tick / params.dayLength) + 1;
   const phase = sun > 0 ? 'day' : 'night';
-  $('clock').textContent = `Day ${day}, ${phase} · tick ${tick} · ${n} cells`;
+  const year = params.dayLength * Math.max(1, params.yearLength);
+  const season = params.seasonSwing > 0 ? `${SEASONS[Math.floor(((tick % year) / year) * 4)]}, ` : '';
+  $('clock').textContent = `Day ${day}, ${season}${phase} · tick ${tick} · ${n} cells`;
+  const era = m.climate > 0.4 ? 'Bright era' : m.climate < -0.4 ? 'Dim era' : 'Mild climate';
+  $('clock').title = `${era} (sun ×${Math.max(0.1, 1 + params.climateSwing * m.climate).toFixed(2)}) · ${m.vents.length} vents open`;
   // Above what the computer can keep up with, show the speed actually reached.
   const actual = rate / params.ticksPerSecond;
   const behind = !paused && rate > 0 && actual < currentSpeed() * 0.8;
@@ -269,6 +276,7 @@ function drawSide(): void {
     `${stats.totalBorn.toLocaleString()} cells born · ${stats.engulfed.toLocaleString()} engulfed · ` +
     `${stats.swaps.toLocaleString()} gene swaps · ${stats.captured.toLocaleString()} kept as guests · ` +
     `${stats.policed.toLocaleString()} bonds cut by policing`;
+  drawFamilyTree($('familyChart'), stats.species, last?.tick ?? 0, speciesCss);
   $('speciesTree').replaceChildren(...speciesTree(stats.species));
 }
 
@@ -539,6 +547,11 @@ function showInspector(d: CellDetail): void {
 /** Parameters that can change while the pond runs: [key, label, min, max]. */
 const LIVE: [keyof Params, string, number, number][] = [
   ['dayLength', 'Day length (ticks)', 300, 12000],
+  ['yearLength', 'Days per year', 1, 100],
+  ['seasonSwing', 'Season strength', 0, 0.8],
+  ['climateSwing', 'Climate drift strength', 0, 0.9],
+  ['volcanoSwing', 'Volcanic drift strength', 0, 1],
+  ['climateTime', 'Climate drift time (ticks)', 10000, 1000000],
   ['kLight', 'Light gain', 0, 0.4],
   ['lightPerColumn', 'Light per water column', 0.05, 2],
   ['lightHalfDepth', 'Light halves every (units)', 15, 300],
@@ -546,6 +559,7 @@ const LIVE: [keyof Params, string, number, number][] = [
   ['ventRegen', 'Vent refill per tick', 0, 30],
   ['ventCount', 'Vents', 0, 15],
   ['kBasal', 'Basal cost', 0, 0.02],
+  ['restCost', 'Resting cell cost (share)', 0, 1],
   ['kSwim', 'Swimming cost', 0, 0.03],
   ['kFlagellum', 'Flagellum upkeep', 0, 0.01],
   ['engulfGain', 'Engulf energy gain', 0, 1],

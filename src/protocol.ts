@@ -19,6 +19,10 @@ export interface Frame {
   type: 'frame';
   tick: number;
   sun: number;
+  /** -1 winter to 1 summer. */
+  season: number;
+  /** Slow climate drift: below 0 dim era, above 0 bright era. */
+  climate: number;
   /** Simulated ticks per wall-clock second, measured. */
   rate: number;
   n: number;

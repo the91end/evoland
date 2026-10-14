@@ -51,6 +51,8 @@ const ENGULF_DEBRIS = 0.1;
 const CHEAT_RATIO = 2;
 /** A cell type's outputs must pass this to count: dividing below -0.2 stops division. */
 const NO_DIVIDE = -0.2;
+/** Ticks between steps of the slow climate and volcanism drift. */
+const CLIMATE_EVERY = 100;
 /** Ticks a cell that just left its colony stays unable to bond. */
 const LEAVE_TICKS = 200;
 /** Cell type index of sex cells and germ cells. */
@@ -124,6 +126,10 @@ export interface StatsSample {
   debris: number;
   meanRadius: number;
   sun: number;
+  season: number;
+  climate: number;
+  volcanism: number;
+  vents: number;
   /** Species id -> living cells. */
   species: Record<number, number>;
   /** Cells with at least one bond. */
@@ -155,6 +161,12 @@ export class World {
   readonly seed: string;
   tick = 0;
   sun = 0;
+  /** -1 (winter) to 1 (summer). */
+  season = 0;
+  /** Slow climate drift, about -1 (dim era) to 1 (bright era). */
+  climate = 0;
+  /** Slow drift in volcanic activity, about -1 (quiet) to 1 (active). */
+  volcanism = 0;
 
   // ---- cells (struct of arrays) ----
   readonly cap: number;
@@ -528,7 +540,22 @@ export class World {
   // =====================================================================
 
   private updateSun(): void {
-    this.sun = sunAt(this.tick, this.p.dayLength);
+    const { p, rng } = this;
+    // Climate and volcanism wander slowly and keep drifting back toward normal.
+    if (this.tick % CLIMATE_EVERY === 0) {
+      const k = CLIMATE_EVERY / Math.max(CLIMATE_EVERY, p.climateTime);
+      const s = Math.sqrt(2 * k);
+      this.climate = clamp(this.climate * (1 - k) + rng.gauss() * s, -1.5, 1.5);
+      this.volcanism = clamp(this.volcanism * (1 - k) + rng.gauss() * s, -1.5, 1.5);
+    }
+    this.season = Math.sin((2 * Math.PI * this.tick) / (p.dayLength * Math.max(1, p.yearLength)));
+    const bright = Math.max(0.1, 1 + p.climateSwing * this.climate);
+    this.sun = bright * sunAt(this.tick, p.dayLength, p.seasonSwing * this.season);
+  }
+
+  /** Vents open now, after volcanic activity has had its say. */
+  ventTarget(): number {
+    return Math.max(0, Math.round(this.p.ventCount * (1 + this.p.volcanoSwing * this.volcanism)));
   }
 
   /** Light reaching depth y at full exposure (before shading). */
@@ -548,7 +575,7 @@ export class World {
       vent.strength = Math.max(0, Math.min(1, a / 1000, (vent.life - a) / 2000));
       vent.stock = Math.min(p.ventStock, vent.stock + p.ventRegen * vent.strength);
     }
-    while (this.vents.length < p.ventCount) this.openVent(false);
+    while (this.vents.length < this.ventTarget()) this.openVent(false);
   }
 
   /**
@@ -887,8 +914,10 @@ export class World {
     this.energy[i] = Math.min(this.maxE[i], this.energy[i] + gain);
 
     // ---- pay ----
-    // A flagellum costs upkeep even at rest, on top of the work of swimming.
-    this.energy[i] -= (p.kBasal + p.kFlagellum * this.mot[i]) * r2 + p.kSwim * f * f * r2 + p.kBond * this.bondCount[i];
+    // Feeding machinery costs upkeep, so a cell that stops feeding rests
+    // cheaply. A flagellum costs upkeep even at rest, on top of the work of swimming.
+    const basal = p.kBasal * (p.restCost + (1 - p.restCost) * feedBoost);
+    this.energy[i] -= (basal + p.kFlagellum * this.mot[i]) * r2 + p.kSwim * f * f * r2 + p.kBond * this.bondCount[i];
     this.age[i]++;
     if (this.cooldown[i] > 0) this.cooldown[i]--;
     if (this.engulfCd[i] > 0) this.engulfCd[i]--;
@@ -1722,7 +1751,8 @@ export class World {
     if (effE > 0.05) this.bodyHunt(b, effE, maxE);
 
     // ---- pay ----
-    b.energy -= cells * ((p.kBasal + p.kFlagellum * t.motility) * r2 + p.kBond * 2) + p.kSwim * swim * swim * r2 * cells;
+    const basal = p.kBasal * (p.restCost * cells + (1 - p.restCost) * feedCells);
+    b.energy -= basal * r2 + cells * (p.kFlagellum * t.motility * r2 + p.kBond * 2) + p.kSwim * swim * swim * r2 * cells;
     b.age++;
     if (b.energy <= 0 || b.age > b.lifespan) {
       this.killBody(b);
@@ -1932,6 +1962,10 @@ export class World {
       debris: this.nd,
       meanRadius: this.n ? rs / this.n : 0,
       sun: this.sun,
+      season: this.season,
+      climate: this.climate,
+      volcanism: this.volcanism,
+      vents: this.vents.length,
       species: sp,
       bonded,
       colonies: colonySpecies.size,
@@ -1983,8 +2017,12 @@ export class World {
 // =====================================================================
 
 /** Sun strength 0..1: day for the first half of each cycle, night for the second. */
-export function sunAt(tick: number, dayLength: number): number {
-  return Math.max(0, Math.sin((2 * Math.PI * tick) / dayLength));
+/**
+ * Sunlight over the day, 0 at night. A positive season lifts the curve, so
+ * days are longer and brighter; a negative one makes them short and dim.
+ */
+export function sunAt(tick: number, dayLength: number, season = 0): number {
+  return Math.max(0, Math.sin((2 * Math.PI * tick) / dayLength) + season) / (1 + Math.abs(season));
 }
 
 /** Gentle current, periodic across the wrapped pond, stronger near the surface. */

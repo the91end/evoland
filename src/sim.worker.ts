@@ -208,6 +208,8 @@ function sendFrame(): void {
     type: 'frame',
     tick: w.tick,
     sun: w.sun,
+    season: w.season,
+    climate: w.climate,
     rate,
     n,
     ids,

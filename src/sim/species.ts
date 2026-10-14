@@ -19,6 +19,10 @@ export interface SpeciesInfo {
   feeding: [number, number, number];
   meanRadius: number;
   peak: number;
+  /** Share of its cells bonded into colonies. */
+  bonded: number;
+  /** Tick it first had most of its cells in colonies, or -1. */
+  multiSince: number;
 }
 
 /**
@@ -99,6 +103,8 @@ export class Species {
         feeding: [0, 0, 0],
         meanRadius: 0,
         peak: 0,
+        bonded: 0,
+        multiSince: -1,
       });
       for (const i of L.members) assign[i] = id;
       newCentroids.push({ id, c: L.c });
@@ -120,16 +126,17 @@ export class Species {
     }
 
     // 4. Recompute centroids and stats.
-    const sums = new Map<number, { c: Float64Array; r: number; count: number }>();
+    const sums = new Map<number, { c: Float64Array; r: number; count: number; bonded: number }>();
     for (let i = 0; i < n; i++) {
       const id = assign[i];
       w.species[i] = id;
       const rec = w.lineage.get(w.id[i]);
       if (rec) rec.species = id;
       let s = sums.get(id);
-      if (!s) sums.set(id, (s = { c: new Float64Array(DIM), r: 0, count: 0 }));
+      if (!s) sums.set(id, (s = { c: new Float64Array(DIM), r: 0, count: 0, bonded: 0 }));
       for (let k = 0; k < DIM; k++) s.c[k] += feat[i * DIM + k];
       s.r += w.radius[i];
+      if (w.bondCount[i] > 0) s.bonded++;
       s.count++;
     }
     this.centroids = [];
@@ -146,6 +153,9 @@ export class Species {
       info.tag = [s.c[0], s.c[1], s.c[2]];
       info.feeding = [s.c[3], s.c[4], s.c[5]];
       info.meanRadius = s.r / s.count;
+      info.bonded = s.bonded / s.count;
+      // Saves from before this field existed lack it.
+      if ((info.multiSince ?? -1) < 0) info.multiSince = s.count >= MIN_FOUNDERS && info.bonded >= 0.5 ? w.tick : -1;
       info.extinct = -1;
       this.centroids.push({ id: info.id, c: s.c });
     }

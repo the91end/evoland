@@ -10,6 +10,16 @@ export interface Params {
   ticksPerSecond: number;
   /** Full day+night cycle length in ticks (half day, half night). */
   dayLength: number;
+  /** Days per year. Summer days are longer and brighter, winter days shorter and dimmer. */
+  yearLength: number;
+  /** How strongly seasons change day length and brightness (0 = no seasons). */
+  seasonSwing: number;
+  /** How far the slow climate drift can brighten or dim the sun (0 = steady). */
+  climateSwing: number;
+  /** How far slow shifts in volcanic activity can change the number of vents. */
+  volcanoSwing: number;
+  /** Ticks over which climate and volcanism wander. */
+  climateTime: number;
   startingCells: number;
   /**
    * Tag distance the starting cells still treat as kin. Starting picky
@@ -28,8 +38,13 @@ export interface Params {
   // Energy
   /** Max energy = energyPerVolume * radius^3. */
   energyPerVolume: number;
-  /** Basal cost per tick = kBasal * radius^2. */
+  /**
+   * Basal cost per tick = kBasal * radius^2, scaled by how hard the cell
+   * feeds: restCost of it when the Feed output is fully off, 1 at neutral.
+   */
   kBasal: number;
+  /** Share of basal cost a cell still pays when it stops feeding entirely. */
+  restCost: number;
   /** Swimming cost per tick = kSwim * force^2 * radius^2. */
   kSwim: number;
   /** Flagellum upkeep per tick, even at rest = kFlagellum * motility * radius^2. */
@@ -99,6 +114,11 @@ export const DEFAULT_PARAMS: Params = {
   depth: 300,
   ticksPerSecond: 30,
   dayLength: 3000,
+  yearLength: 20,
+  seasonSwing: 0.3,
+  climateSwing: 0.35,
+  volcanoSwing: 0.6,
+  climateTime: 150000,
   startingCells: 300,
   startTolerance: 0.1,
   cellCap: 5000,
@@ -109,6 +129,7 @@ export const DEFAULT_PARAMS: Params = {
 
   energyPerVolume: 5,
   kBasal: 0.004,
+  restCost: 0.3,
   kSwim: 0.005,
   kFlagellum: 0.001,
   kLight: 0.1,
