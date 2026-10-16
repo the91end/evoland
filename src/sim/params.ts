@@ -45,6 +45,12 @@ export interface Params {
   kBasal: number;
   /** Share of basal cost a cell still pays when it stops feeding entirely. */
   restCost: number;
+  /**
+   * Repair upkeep for living longer: basal cost is multiplied by
+   * 1 + repairCost * (lifespan multiplier - 1), so a 4x lifespan costs
+   * 1 + 3 * repairCost and a 0.25x lifespan saves 0.75 * repairCost.
+   */
+  repairCost: number;
   /** Swimming cost per tick = kSwim * force^2 * radius^2. */
   kSwim: number;
   /** Flagellum upkeep per tick, even at rest = kFlagellum * motility * radius^2. */
@@ -130,6 +136,7 @@ export const DEFAULT_PARAMS: Params = {
   energyPerVolume: 5,
   kBasal: 0.004,
   restCost: 0.3,
+  repairCost: 0.2,
   kSwim: 0.005,
   kFlagellum: 0.001,
   kLight: 0.1,

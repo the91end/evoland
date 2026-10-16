@@ -35,6 +35,8 @@ export const Gene = {
   DivUp: 22,
   /** How loosely daughters follow the body axis: 0 builds a line, 1 a ball. */
   DivSpread: 23,
+  /** How long the cell lives before it dies of old age; longer life costs repair upkeep. */
+  Lifespan: 24,
 } as const;
 
 /**
@@ -51,7 +53,7 @@ export const SWITCHES = 4;
 export const SWITCH_INPUTS = 10;
 export const OUTPUTS = 6;
 export const SWITCH_BLOCK = SWITCH_INPUTS + OUTPUTS;
-export const SWITCH_BASE = 24;
+export const SWITCH_BASE = 25;
 /** Switch states of a fresh egg or founding germ cell. */
 export const EGG_STATE = 0.5;
 export const GENE_COUNT = SWITCH_BASE + SWITCHES * SWITCH_BLOCK;
@@ -86,6 +88,7 @@ export const GENE_NAMES: string[] = [
   'Sex',
   'Body axis (daughters up)',
   'Body spread (ball vs line)',
+  'Lifespan',
   ...Array.from({ length: SWITCHES * SWITCH_BLOCK }, (_, k) => {
     const sw = Math.floor(k / SWITCH_BLOCK) + 1;
     const w = k % SWITCH_BLOCK;
@@ -117,6 +120,8 @@ export interface Traits {
   sex: number;
   divUp: number;
   divSpread: number;
+  /** Multiplier on the base lifespan. */
+  life: number;
 }
 
 export function radiusOf(g: ArrayLike<number>, o: number): number {
@@ -147,7 +152,13 @@ export function traitsOf(g: ArrayLike<number>, o = 0): Traits {
     sex: g[o + Gene.Sex],
     divUp: g[o + Gene.DivUp],
     divSpread: g[o + Gene.DivSpread],
+    life: lifeFactorOf(g[o + Gene.Lifespan]),
   };
+}
+
+/** Lifespan multiplier from its gene: 0.25x to 4x the base lifespan (1x at the midpoint). */
+export function lifeFactorOf(g: number): number {
+  return Math.pow(2, 4 * g - 2);
 }
 
 /** Adult body size from its gene: 2 to 2048 cells (64 at the midpoint). */

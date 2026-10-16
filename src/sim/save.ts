@@ -10,7 +10,8 @@ import { World } from './world';
  */
 
 const MAGIC = 'EVO1';
-const VERSION = 1;
+/** 2: the lifespan gene shifted the switch genes by one. */
+const VERSION = 2;
 
 /** Scratch buffers rebuilt every tick: not worth saving. */
 const SKIP = new Set(['near', 'tmp', 'bucketStart', 'bucketOf', 'cursor', 'sorted', 'order']);

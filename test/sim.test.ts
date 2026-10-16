@@ -12,6 +12,7 @@ import {
   runSwitches,
   swapGenes,
   traitsOf,
+  lifeFactorOf,
 } from '../src/sim/genome';
 import { World, sunAt } from '../src/sim/world';
 
@@ -43,6 +44,12 @@ describe('genome', () => {
       expect(v).toBeGreaterThanOrEqual(0);
       expect(v).toBeLessThanOrEqual(1);
     }
+  });
+
+  it('maps the lifespan gene from 0.25x to 4x, 1x at the midpoint', () => {
+    expect(lifeFactorOf(0)).toBeCloseTo(0.25);
+    expect(lifeFactorOf(0.5)).toBeCloseTo(1);
+    expect(lifeFactorOf(1)).toBeCloseTo(4);
   });
 
   it('normalises feeding shares to sum to 1', () => {
