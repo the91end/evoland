@@ -14,6 +14,7 @@ import {
   runSwitches,
   mutate,
   swapGenes,
+  lifeFactorOf,
   tagDistance,
   traitsOf,
 } from './genome';
@@ -481,7 +482,9 @@ export class World {
     this.z[i] = z;
     this.vx[i] = this.vy[i] = this.vz[i] = 0;
     this.age[i] = 0;
-    this.lifespan[i] = Math.round(this.p.lifespan * this.rng.range(0.85, 1.15));
+    this.lifespan[i] = Math.round(
+      this.p.lifespan * lifeFactorOf(this.genes[i * GENE_COUNT + Gene.Lifespan]) * this.rng.range(0.85, 1.15),
+    );
     this.cooldown[i] = this.p.divisionCooldown;
     this.engulfCd[i] = 0;
     this.force[i] = 0;
@@ -916,7 +919,9 @@ export class World {
     // ---- pay ----
     // Feeding machinery costs upkeep, so a cell that stops feeding rests
     // cheaply. A flagellum costs upkeep even at rest, on top of the work of swimming.
-    const basal = p.kBasal * (p.restCost + (1 - p.restCost) * feedBoost);
+    // Living longer takes more repair, so long-lived cells pay more upkeep.
+    const repair = 1 + p.repairCost * (lifeFactorOf(this.genes[i * GENE_COUNT + Gene.Lifespan]) - 1);
+    const basal = p.kBasal * repair * (p.restCost + (1 - p.restCost) * feedBoost);
     this.energy[i] -= (basal + p.kFlagellum * this.mot[i]) * r2 + p.kSwim * f * f * r2 + p.kBond * this.bondCount[i];
     this.age[i]++;
     if (this.cooldown[i] > 0) this.cooldown[i]--;
@@ -1648,7 +1653,7 @@ export class World {
         place,
         energy,
         age: 0,
-        lifespan: Math.round(p.bodyLifespan * this.rng.range(0.85, 1.15)),
+        lifespan: Math.round(p.bodyLifespan * t.life * this.rng.range(0.85, 1.15)),
         growCd: p.divisionCooldown,
         germCd: 0,
         biteCd: 0,
@@ -1751,7 +1756,7 @@ export class World {
     if (effE > 0.05) this.bodyHunt(b, effE, maxE);
 
     // ---- pay ----
-    const basal = p.kBasal * (p.restCost * cells + (1 - p.restCost) * feedCells);
+    const basal = p.kBasal * (1 + p.repairCost * (t.life - 1)) * (p.restCost * cells + (1 - p.restCost) * feedCells);
     b.energy -= basal * r2 + cells * (p.kFlagellum * t.motility * r2 + p.kBond * 2) + p.kSwim * swim * swim * r2 * cells;
     b.age++;
     if (b.energy <= 0 || b.age > b.lifespan) {
