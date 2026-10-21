@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --bg: #04121c;
   --panel: rgba(6, 22, 34, 0.86);
   --border: rgba(140, 200, 230, 0.18);
@@ -56,6 +57,13 @@ input {
 
 button {
   cursor: pointer;
+}
+
+/* The open dropdown list is drawn by the OS and ignores the translucent
+   select background, so give options a solid dark fill. */
+select option {
+  color: var(--text);
+  background: var(--bg);
 }
 
 button:hover {
