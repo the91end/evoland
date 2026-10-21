@@ -54,6 +54,8 @@ const CHEAT_RATIO = 2;
 const NO_DIVIDE = -0.2;
 /** Ticks between steps of the slow climate and volcanism drift. */
 const CLIMATE_EVERY = 100;
+/** Share of a body's volume its touching, round cells fill (loose random packing). */
+const BODY_PACKING = 0.6;
 /** Ticks a cell that just left its colony stays unable to bond. */
 const LEAVE_TICKS = 200;
 /** Cell type index of sex cells and germ cells. */
@@ -1706,8 +1708,13 @@ export class World {
       swim += c * t.motility * (1 + b.out[k * OUTPUTS + Output.Swim]);
     }
     swim /= cells;
-    // A body shades its own water columns, so light is capped by its footprint.
-    const columns = Math.max(1, (Math.PI * b.radius * b.radius) / (p.hashCell * p.hashCell));
+    // A body shades its own water columns, so light is capped by its footprint:
+    // the same columns its cells would touch if they were still loose, touching
+    // cells. That is a loosely packed ball laid on the column grid, which on
+    // average overlaps (area + side² + 4 · radius · side) / side² columns.
+    const s = p.hashCell;
+    const R = r * Math.cbrt(cells / BODY_PACKING);
+    const columns = (Math.PI * R * R + s * s + 4 * R * s) / (s * s);
     const demand = p.kLight * effL * this.lightAt(b.y) * r2 * feedCells;
     const lightCap = p.lightPerColumn * this.sun * columns;
     const light = demand > 0 && lightCap > 0 ? demand / (1 + demand / lightCap) : 0;
