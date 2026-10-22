@@ -148,6 +148,9 @@ export interface CellDetail {
     sex: number;
     divUp: number;
     divSpread: number;
+    density: number;
+    crawl: number;
+    rhythm: number;
   };
   cellType: number;
   /** Switch states (0..1) and the outputs they set (-1..1, shared budget). */

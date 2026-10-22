@@ -37,31 +37,43 @@ export const Gene = {
   DivSpread: 23,
   /** How long the cell lives before it dies of old age; longer life costs repair upkeep. */
   Lifespan: 24,
+  /** Weight: 0 floats up (gas pockets), 0.5 is as heavy as water, 1 sinks. */
+  Density: 25,
+  /** Pili and gliding: how hard the cell can pull itself along a surface it touches. */
+  Crawl: 26,
+  /** Period of the cell's internal clock, which the switches can read as a beat. */
+  Rhythm: 27,
 } as const;
 
 /**
- * The gene switch network. Each of the 4 switches reads 10 inputs (bond
+ * The gene switch network. Each of the 4 switches reads 11 inputs (bond
  * count, partners' signal, energy, light, age, a constant, developmental
- * stage, height within the body, distance from the body's centre, its own
- * last state) and pushes 6 outputs.
+ * stage, height within the body, distance from the body's centre, the beat
+ * of the cell's own clock, its own last state) and pushes 8 outputs.
  * Stage and height are what let a body plan unfold the same way each
  * generation: a cell knows how many divisions it is from the egg and
- * whether it sits at the top or bottom, inside or outside of the body. A switch's 13 weights sit together so sex
+ * whether it sits at the top or bottom, inside or outside of the body. The
+ * clock beats with the cell's age, so cells born one after another along a
+ * body beat slightly out of step. A switch's 19 weights sit together so sex
  * passes them on as one block.
  */
 export const SWITCHES = 4;
-export const SWITCH_INPUTS = 10;
-export const OUTPUTS = 6;
+export const SWITCH_INPUTS = 11;
+export const OUTPUTS = 8;
 export const SWITCH_BLOCK = SWITCH_INPUTS + OUTPUTS;
-export const SWITCH_BASE = 25;
+export const SWITCH_BASE = 28;
 /** Switch states of a fresh egg or founding germ cell. */
 export const EGG_STATE = 0.5;
 export const GENE_COUNT = SWITCH_BASE + SWITCHES * SWITCH_BLOCK;
 
 /** What the switch outputs change, in output order. */
-export const Output = { Feed: 0, Swim: 1, Adhere: 2, Defend: 3, Divide: 4, Germ: 5 } as const;
-export const INPUT_NAMES = ['bonds', 'signal', 'energy', 'light', 'age', 'bias', 'stage', 'height', 'outside', 'self'];
-export const OUTPUT_NAMES = ['feeding', 'swimming', 'adhesion', 'defence', 'dividing', 'germ'];
+/**
+ * Contract shortens a cell's bonds when positive and stretches them when
+ * negative (muscle). Grip holds the cell still against the floor.
+ */
+export const Output = { Feed: 0, Swim: 1, Adhere: 2, Defend: 3, Divide: 4, Germ: 5, Contract: 6, Grip: 7 } as const;
+export const INPUT_NAMES = ['bonds', 'signal', 'energy', 'light', 'age', 'bias', 'stage', 'height', 'outside', 'rhythm', 'self'];
+export const OUTPUT_NAMES = ['feeding', 'swimming', 'adhesion', 'defence', 'dividing', 'germ', 'contraction', 'grip'];
 
 export const GENE_NAMES: string[] = [
   'Size',
@@ -89,6 +101,9 @@ export const GENE_NAMES: string[] = [
   'Body axis (daughters up)',
   'Body spread (ball vs line)',
   'Lifespan',
+  'Weight (float vs sink)',
+  'Crawling',
+  'Rhythm period',
   ...Array.from({ length: SWITCHES * SWITCH_BLOCK }, (_, k) => {
     const sw = Math.floor(k / SWITCH_BLOCK) + 1;
     const w = k % SWITCH_BLOCK;
@@ -122,6 +137,11 @@ export interface Traits {
   divSpread: number;
   /** Multiplier on the base lifespan. */
   life: number;
+  /** -1 floats up as fast as it can, 0 hangs in the water, 1 sinks. */
+  density: number;
+  crawl: number;
+  /** Ticks per beat of the internal clock. */
+  rhythm: number;
 }
 
 export function radiusOf(g: ArrayLike<number>, o: number): number {
@@ -153,6 +173,9 @@ export function traitsOf(g: ArrayLike<number>, o = 0): Traits {
     divUp: g[o + Gene.DivUp],
     divSpread: g[o + Gene.DivSpread],
     life: lifeFactorOf(g[o + Gene.Lifespan]),
+    density: 2 * g[o + Gene.Density] - 1,
+    crawl: g[o + Gene.Crawl],
+    rhythm: rhythmOf(g[o + Gene.Rhythm]),
   };
 }
 
@@ -161,15 +184,20 @@ export function lifeFactorOf(g: number): number {
   return Math.pow(2, 4 * g - 2);
 }
 
+/** Clock period from its gene: 20 to 320 ticks per beat (80 at the midpoint). */
+export function rhythmOf(g: number): number {
+  return 20 * Math.pow(2, 4 * g);
+}
+
 /** Adult body size from its gene: 2 to 2048 cells (64 at the midpoint). */
 export function colonyLimitOf(g: number): number {
   return Math.round(2 * Math.pow(1024, g));
 }
 
 /**
- * Runs one cell's switch network. Reads `inputs` (the first 9 switch
- * inputs; the 10th is each switch's own state), updates `state[so..so+4)`
- * in place and writes the 6 outputs to `out[oo..oo+6)`. Outputs share a
+ * Runs one cell's switch network. Reads `inputs` (all switch inputs but
+ * the last, which is each switch's own state), updates `state[so..so+4)`
+ * in place and writes the outputs to `out[oo..oo+OUTPUTS)`. Outputs share a
  * fixed budget: their sizes never add up to more than 1, so a cell that
  * boosts one thing has less to give everything else.
  */
@@ -184,8 +212,8 @@ export function runSwitches(
 ): void {
   for (let s = 0; s < SWITCHES; s++) {
     const b = o + SWITCH_BASE + s * SWITCH_BLOCK;
-    let sum = (2 * g[b + 9] - 1) * state[so + s];
-    for (let k = 0; k < 9; k++) sum += (2 * g[b + k] - 1) * inputs[k];
+    let sum = (2 * g[b + SWITCH_INPUTS - 1] - 1) * state[so + s];
+    for (let k = 0; k < SWITCH_INPUTS - 1; k++) sum += (2 * g[b + k] - 1) * inputs[k];
     state[so + s] = 1 / (1 + Math.exp(-4 * sum));
   }
   let total = 0;
@@ -200,17 +228,19 @@ export function runSwitches(
 
 /**
  * A cell's type from its outputs: the output it boosts most, or plain
- * when nothing stands out. Sex cells are their own type.
+ * when nothing stands out. Muscle counts stretching as well as
+ * contracting. Sex cells are their own type.
  */
-export const CELL_TYPES = ['plain', 'feeder', 'swimmer', 'sticky', 'defender', 'divider', 'germ', 'sex cell'];
+export const CELL_TYPES = ['plain', 'feeder', 'swimmer', 'sticky', 'defender', 'divider', 'germ', 'muscle', 'gripper', 'sex cell'];
 export const TYPE_THRESHOLD = 0.25;
 
 export function cellTypeOf(out: ArrayLike<number>, oo: number): number {
   let best = -1;
   let bestV = TYPE_THRESHOLD;
   for (let k = 0; k < OUTPUTS; k++) {
-    if (out[oo + k] > bestV) {
-      bestV = out[oo + k];
+    const v = k === Output.Contract ? Math.abs(out[oo + k]) : out[oo + k];
+    if (v > bestV) {
+      bestV = v;
       best = k;
     }
   }

@@ -76,6 +76,22 @@ export interface Params {
   /** Fraction of a cell's energy left as debris when it dies. */
   debrisFraction: number;
 
+  // Weight, surfaces and muscle
+  /** Sinking speed per tick of the heaviest cell; the lightest rises as fast. */
+  gravity: number;
+  /** Upkeep of floating = kFloat * lift * radius^2 (gas pockets cost protein; sinking is free). */
+  kFloat: number;
+  /** How much the floor holds a resting cell still (0 = slides like ice, 1 = stuck). */
+  floorFriction: number;
+  /** Top crawling speed along a surface, before the cell's size slows it. */
+  crawlSpeed: number;
+  /** Pili upkeep per tick = kCrawl * crawl * radius^2. */
+  kCrawl: number;
+  /** Most a muscle cell can shorten or stretch its bonds, as a fraction of touching distance. */
+  muscleStrength: number;
+  /** Muscle cost per tick = kMuscle * |contraction| * radius^2. */
+  kMuscle: number;
+
   // Colonies and partners
   /** Bond upkeep per bond per tick (k_d). */
   kBond: number;
@@ -148,6 +164,14 @@ export const DEFAULT_PARAMS: Params = {
   ventRegen: 8,
   engulfGain: 0.6,
   debrisFraction: 0.3,
+
+  gravity: 0.03,
+  kFloat: 0.0005,
+  floorFriction: 0.5,
+  crawlSpeed: 0.6,
+  kCrawl: 0.0005,
+  muscleStrength: 0.4,
+  kMuscle: 0.0005,
 
   kBond: 0.002,
   maxBonds: 6,

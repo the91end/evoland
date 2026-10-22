@@ -8,6 +8,7 @@ import {
   OUTPUTS,
   Output,
   SWITCHES,
+  SWITCH_INPUTS,
   cellTypeOf,
   efficiency,
   recombine,
@@ -226,6 +227,12 @@ export class World {
   readonly stage: Uint16Array;
   readonly divUp: Float32Array;
   readonly divSpread: Float32Array;
+  /** Weight from -1 (floats up) to 1 (sinks), crawling strength and clock period. */
+  readonly dens: Float32Array;
+  readonly crawl: Float32Array;
+  readonly period: Float32Array;
+  /** How firmly each cell is held in place this tick, by the floor and its own grip. */
+  readonly hold: Float32Array;
   /** Per colony root: centre (offset from the root cell, so wrapping is safe) and reach. */
   private readonly colonyX: Float32Array;
   private readonly colonyY: Float32Array;
@@ -234,7 +241,7 @@ export class World {
   private readonly colonyReach: Float32Array;
   /** Per colony root: live cell count, kept up to date as cells are born within a tick. */
   private readonly colonyLive: Int32Array;
-  private readonly inputs = new Float32Array(9);
+  private readonly inputs = new Float32Array(SWITCH_INPUTS - 1);
 
   // ---- bonds: up to maxBonds slots per cell, by cell index ----
   readonly mb: number;
@@ -356,6 +363,10 @@ export class World {
     this.stage = new Uint16Array(cap);
     this.divUp = new Float32Array(cap);
     this.divSpread = new Float32Array(cap);
+    this.dens = new Float32Array(cap);
+    this.crawl = new Float32Array(cap);
+    this.period = new Float32Array(cap);
+    this.hold = new Float32Array(cap);
     this.colonyX = new Float32Array(cap);
     this.colonyY = new Float32Array(cap);
     this.colonyZ = new Float32Array(cap);
@@ -433,6 +444,9 @@ export class World {
       g[Gene.Sex] = clamp01(0.1 + rng.gauss() * 0.03);
       // No flagellum yet: the first cells drift, and swimming has to evolve.
       g[Gene.Motility] = clamp01(0.02 + rng.gauss() * 0.01);
+      // Like real cells, a touch heavier than water; no pili yet either.
+      g[Gene.Density] = clamp01(0.55 + rng.gauss() * 0.02);
+      g[Gene.Crawl] = clamp01(0.02 + rng.gauss() * 0.01);
       g[Gene.LikeR] = g[Gene.TagR];
       g[Gene.LikeG] = g[Gene.TagG];
       g[Gene.LikeB] = g[Gene.TagB];
@@ -490,6 +504,7 @@ export class World {
     this.cooldown[i] = this.p.divisionCooldown;
     this.engulfCd[i] = 0;
     this.force[i] = 0;
+    this.hold[i] = 0;
     this.dead[i] = 0;
     this.bondCount[i] = 0;
     this.guestCount[i] = 0;
@@ -537,6 +552,9 @@ export class World {
     this.signalG[i] = t.signal;
     this.divUp[i] = t.divUp;
     this.divSpread[i] = t.divSpread;
+    this.dens[i] = t.density;
+    this.crawl[i] = t.crawl;
+    this.period[i] = t.rhythm;
     if (this.energy[i] > this.maxE[i]) this.energy[i] = this.maxE[i];
   }
 
@@ -768,6 +786,8 @@ export class World {
       fleeZ = 0;
     const sense2 = p.senseRadius * p.senseRadius;
     const canEngulf = this.shareE[i] > 0.05;
+    // Something to crawl on: another body's cell (the floor is checked below).
+    let contact = false;
 
     const nn = this.gatherNeighbours(xi, yi, zi);
     for (let q = 0; q < nn; q++) {
@@ -802,15 +822,20 @@ export class World {
       const touch = ri + rj;
       if (d2 >= touch * touch) continue;
 
-      // Push apart.
+      // Push apart. Cells of one body can be squeezed together by its muscles.
+      const sameBody = this.bondCount[i] > 0 && this.bondCount[j] > 0 && this.colony[i] === this.colony[j];
+      if (!sameBody) contact = true;
       const d = Math.sqrt(d2) || 0.01;
-      const push = (0.5 * (touch - d)) / d;
-      this.x[i] -= dx * push * 0.5;
-      this.y[i] -= dy * push * 0.5;
-      this.z[i] -= dz * push * 0.5;
-      this.x[j] += dx * push * 0.5;
-      this.y[j] += dy * push * 0.5;
-      this.z[j] += dz * push * 0.5;
+      const gap = sameBody ? touch * (1 - p.muscleStrength) : touch;
+      if (d < gap) {
+        const push = (0.5 * (gap - d)) / d;
+        this.x[i] -= dx * push * 0.5;
+        this.y[i] -= dy * push * 0.5;
+        this.z[i] -= dz * push * 0.5;
+        this.x[j] += dx * push * 0.5;
+        this.y[j] += dy * push * 0.5;
+        this.z[j] += dz * push * 0.5;
+      }
 
       if (isGamete && this.gamete[j] > 0 && friend && tagDistance(genes, i * G, genes, j * G) <= this.tol[j]) {
         if (this.fuse(i, j)) return;
@@ -838,7 +863,6 @@ export class World {
         // start a colony, and touching cells of the same body stick to
         // each other like tissue; separate bodies never merge.
         const single = this.bondCount[i] === 0 && this.bondCount[j] === 0;
-        const sameBody = this.bondCount[i] > 0 && this.bondCount[j] > 0 && this.colony[i] === this.colony[j];
         if (
           !isGamete &&
           this.gamete[j] === 0 &&
@@ -897,16 +921,43 @@ export class World {
     sy += rng.gauss() * 0.3;
     sz += rng.gauss() * 0.3;
     const sl = Math.hypot(sx, sy, sz) || 1;
-    const f = this.mot[i] * Math.min(1, sl) * (1 + out[o + Output.Swim]);
+    const urge = Math.min(1, sl) * (1 + out[o + Output.Swim]);
+    const f = this.mot[i] * urge;
     this.force[i] = f;
     const speed = (f * p.maxSpeed) / Math.sqrt(ri);
     this.vx[i] = 0.6 * this.vx[i] + 0.4 * (sx / sl) * speed;
     this.vy[i] = 0.6 * this.vy[i] + 0.4 * (sy / sl) * speed;
     this.vz[i] = 0.6 * this.vz[i] + 0.4 * (sz / sl) * speed;
+    // A cell on the floor is held by friction and by its own grip, which
+    // also holds it against the current. Its muscles pull against that hold.
+    const onFloor = this.y[i] <= ri + 0.5;
+    const grip = Math.max(0, out[o + Output.Grip]);
+    const hold = onFloor ? 0.95 * clamp01(p.floorFriction + grip) : 0;
+    this.hold[i] = hold;
+    const free = 1 - hold;
+    // Pili pull a cell along whatever it touches. It can't crawl into the floor,
+    // and it can't crawl while it grips.
+    let cx = 0,
+      cy = 0,
+      cz = 0;
+    let fc = 0;
+    if ((onFloor || contact) && this.crawl[i] > 0) {
+      fc = this.crawl[i] * urge * (1 - grip);
+      let ux = sx,
+        uy = onFloor ? Math.max(0, sy) : sy,
+        uz = sz;
+      const ul = Math.hypot(ux, uy, uz) || 1;
+      const cs = (fc * p.crawlSpeed) / Math.sqrt(ri);
+      cx = (ux / ul) * cs;
+      cy = (uy / ul) * cs;
+      cz = (uz / ul) * cs;
+    }
+    // Weight: heavy cells sink, cells with gas pockets rise.
+    const sink = -p.gravity * this.dens[i];
     currentAt(this.x[i], this.y[i], this.z[i], this.tick, p, this.tmp);
-    this.x[i] = wrap(this.x[i] + this.vx[i] + this.tmp[0] + rng.gauss() * 0.05, p.width);
-    this.y[i] = clamp(this.y[i] + this.vy[i] + this.tmp[1] + rng.gauss() * 0.05, ri, p.depth - ri);
-    this.z[i] = wrap(this.z[i] + this.vz[i] + this.tmp[2] + rng.gauss() * 0.05, p.width);
+    this.x[i] = wrap(this.x[i] + (this.vx[i] + this.tmp[0] + rng.gauss() * 0.05) * free + cx, p.width);
+    this.y[i] = clamp(this.y[i] + this.vy[i] + this.tmp[1] + rng.gauss() * 0.05 + sink + cy, ri, p.depth - ri);
+    this.z[i] = wrap(this.z[i] + (this.vz[i] + this.tmp[2] + rng.gauss() * 0.05) * free + cz, p.width);
 
     // ---- feed ----
     const r2 = r2i;
@@ -924,7 +975,12 @@ export class World {
     // Living longer takes more repair, so long-lived cells pay more upkeep.
     const repair = 1 + p.repairCost * (lifeFactorOf(this.genes[i * GENE_COUNT + Gene.Lifespan]) - 1);
     const basal = p.kBasal * repair * (p.restCost + (1 - p.restCost) * feedBoost);
-    this.energy[i] -= (basal + p.kFlagellum * this.mot[i]) * r2 + p.kSwim * f * f * r2 + p.kBond * this.bondCount[i];
+    // Pili cost upkeep like a flagellum, gas pockets cost to keep, and muscles
+    // cost while they work.
+    const lift = Math.max(0, -this.dens[i]);
+    const muscle = this.bondCount[i] > 0 ? Math.abs(out[o + Output.Contract]) : 0;
+    const kit = p.kFlagellum * this.mot[i] + p.kCrawl * this.crawl[i] + p.kFloat * lift + p.kMuscle * muscle;
+    this.energy[i] -= (basal + kit) * r2 + p.kSwim * (f * f + fc * fc) * r2 + p.kBond * this.bondCount[i];
     this.age[i]++;
     if (this.cooldown[i] > 0) this.cooldown[i]--;
     if (this.engulfCd[i] > 0) this.engulfCd[i]--;
@@ -976,6 +1032,7 @@ export class World {
       inp[7] = 0;
       inp[8] = 1;
     }
+    inp[9] = Math.sin((2 * Math.PI * this.age[i]) / this.period[i]);
     runSwitches(this.genes, i * GENE_COUNT, inp, this.sw, i * SWITCHES, this.out, i * OUTPUTS);
     // The first switch drives the signal partners hear next tick.
     this.signal[i] = this.signalG[i] * this.sw[i * SWITCHES];
@@ -1383,19 +1440,27 @@ export class World {
         if (dz > half) dz -= p.width;
         else if (dz < -half) dz += p.width;
         const d = Math.hypot(dx, dy, dz) || 0.01;
-        const rest = this.radius[i] + this.radius[j];
-        if (d > rest * BOND_SNAP) {
+        const touch = this.radius[i] + this.radius[j];
+        if (d > touch * BOND_SNAP) {
           this.removeBondAt(i, s);
           continue;
         }
-        // Spring toward touching distance.
-        const c = (0.25 * (d - rest)) / d;
-        this.x[i] = wrap(this.x[i] + dx * c, p.width);
-        this.y[i] = clamp(this.y[i] + dy * c, this.radius[i], p.depth - this.radius[i]);
-        this.z[i] = wrap(this.z[i] + dz * c, p.width);
-        this.x[j] = wrap(this.x[j] - dx * c, p.width);
-        this.y[j] = clamp(this.y[j] - dy * c, this.radius[j], p.depth - this.radius[j]);
-        this.z[j] = wrap(this.z[j] - dz * c, p.width);
+        // Spring toward touching distance, which muscle in either cell
+        // shortens (contracting) or lengthens (stretching).
+        const pull = clamp(0.5 * (this.out[i * OUTPUTS + Output.Contract] + this.out[j * OUTPUTS + Output.Contract]), -1, 1);
+        const rest = touch * (1 - p.muscleStrength * pull);
+        const c = (0.5 * (d - rest)) / d;
+        // A cell held by the floor moves less; its partner moves more.
+        const mi = 1 - this.hold[i];
+        const mj = 1 - this.hold[j];
+        const ci = (c * mi) / (mi + mj);
+        const cj = (c * mj) / (mi + mj);
+        this.x[i] = wrap(this.x[i] + dx * ci, p.width);
+        this.y[i] = clamp(this.y[i] + dy * ci, this.radius[i], p.depth - this.radius[i]);
+        this.z[i] = wrap(this.z[i] + dz * ci, p.width);
+        this.x[j] = wrap(this.x[j] - dx * cj, p.width);
+        this.y[j] = clamp(this.y[j] - dy * cj, this.radius[j], p.depth - this.radius[j]);
+        this.z[j] = wrap(this.z[j] - dz * cj, p.width);
         // A colony swims as one: partners pull each other's velocity together.
         const mvx = 0.5 * (this.vx[i] + this.vx[j]);
         const mvy = 0.5 * (this.vy[i] + this.vy[j]);
@@ -1701,13 +1766,16 @@ export class World {
     // ---- feed: every tissue feeds by the genes, scaled by its feeding output ----
     let feedCells = 0;
     let swim = 0;
+    let grip = 0;
     for (let k = 0; k < T; k++) {
       const c = b.tissue[k];
       if (!c) continue;
       feedCells += c * (1 + b.out[k * OUTPUTS + Output.Feed]);
       swim += c * t.motility * (1 + b.out[k * OUTPUTS + Output.Swim]);
+      grip += c * Math.max(0, b.out[k * OUTPUTS + Output.Grip]);
     }
     swim /= cells;
+    grip /= cells;
     // A body shades its own water columns, so light is capped by its footprint:
     // the same columns its cells would touch if they were still loose, touching
     // cells. That is a loosely packed ball laid on the column grid, which on
@@ -1754,17 +1822,30 @@ export class World {
     b.vx = 0.8 * b.vx + 0.2 * (sx / sl) * speed;
     b.vy = 0.8 * b.vy + 0.2 * (sy / sl) * speed;
     b.vz = 0.8 * b.vz + 0.2 * (sz / sl) * speed;
+    // The same weight, floor and pili rules as for loose cells, for the body as a whole.
+    // (Its tissues have no shape, so its muscles can't push it along.)
+    const onFloor = b.y <= b.radius * 0.5 + 0.5;
+    const free = onFloor ? 1 - 0.95 * clamp01(p.floorFriction + grip) : 1;
+    let crawl = 0;
+    if (onFloor) {
+      const hl = Math.hypot(sx, sz) || 1;
+      crawl = Math.min(1, hl / sl) * t.crawl * (1 - grip);
+      const cs = (crawl * p.crawlSpeed) / Math.sqrt(b.radius);
+      b.x = wrap(b.x + (sx / hl) * cs, W);
+      b.z = wrap(b.z + (sz / hl) * cs, W);
+    }
     currentAt(b.x, b.y, b.z, this.tick, p, this.tmp);
-    b.x = wrap(b.x + b.vx + this.tmp[0], W);
-    b.y = clamp(b.y + b.vy + this.tmp[1], b.radius * 0.5, p.depth - b.radius * 0.5);
-    b.z = wrap(b.z + b.vz + this.tmp[2], W);
+    b.x = wrap(b.x + (b.vx + this.tmp[0]) * free, W);
+    b.y = clamp(b.y + b.vy + this.tmp[1] - p.gravity * t.density, b.radius * 0.5, p.depth - b.radius * 0.5);
+    b.z = wrap(b.z + (b.vz + this.tmp[2]) * free, W);
 
     // ---- hunt: swallow smaller strangers it touches ----
     if (effE > 0.05) this.bodyHunt(b, effE, maxE);
 
     // ---- pay ----
     const basal = p.kBasal * (1 + p.repairCost * (t.life - 1)) * (p.restCost * cells + (1 - p.restCost) * feedCells);
-    b.energy -= basal * r2 + cells * (p.kFlagellum * t.motility * r2 + p.kBond * 2) + p.kSwim * swim * swim * r2 * cells;
+    const kit = p.kFlagellum * t.motility + p.kCrawl * t.crawl + p.kFloat * Math.max(0, -t.density);
+    b.energy -= basal * r2 + cells * (kit * r2 + p.kBond * 2) + p.kSwim * (swim * swim + crawl * crawl) * r2 * cells;
     b.age++;
     if (b.energy <= 0 || b.age > b.lifespan) {
       this.killBody(b);

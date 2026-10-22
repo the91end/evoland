@@ -7,6 +7,8 @@ import {
   SWITCHES,
   SWITCH_BASE,
   SWITCH_BLOCK,
+  SWITCH_INPUTS,
+  Output,
   mutate,
   recombine,
   runSwitches,
@@ -207,7 +209,7 @@ describe('multicellular genes', () => {
     const out = new Float32Array(OUTPUTS);
     for (let t = 0; t < 50; t++) {
       for (let k = 0; k < GENE_COUNT; k++) g[k] = r.next();
-      runSwitches(g, 0, [r.next(), r.next(), r.next(), r.next(), r.next(), 1, r.next(), 2 * r.next() - 1, r.next()], state, 0, out, 0);
+      runSwitches(g, 0, [r.next(), r.next(), r.next(), r.next(), r.next(), 1, r.next(), 2 * r.next() - 1, r.next(), 2 * r.next() - 1], state, 0, out, 0);
       expect(out.reduce((s, v) => s + Math.abs(v), 0)).toBeLessThanOrEqual(1 + 1e-6);
     }
   });
@@ -268,6 +270,65 @@ describe('development', () => {
       w.step();
     }
     expect(w.bodiesFormed).toBeGreaterThan(0);
+  });
+});
+
+describe('weight and muscle', () => {
+  it('sinks heavy cells and floats light ones', () => {
+    const w = new World('weight', { startingCells: 2, cellCap: 50, mutationStep: 0, gravity: 0.2 });
+    const start = 150;
+    for (const [i, dens] of [
+      [0, 1],
+      [1, 0],
+    ]) {
+      w.genes[i * GENE_COUNT + Gene.Density] = dens;
+      w.genes[i * GENE_COUNT + Gene.Motility] = 0;
+      w.genes[i * GENE_COUNT + Gene.Crawl] = 0;
+      w.refreshTraitsFor(i);
+      w.x[i] = 100 + 300 * i;
+      w.y[i] = start;
+    }
+    for (let t = 0; t < 200; t++) {
+      for (let i = 0; i < w.n; i++) {
+        w.energy[i] = 0.4 * w.maxE[i];
+        w.lifespan[i] = 1e6;
+      }
+      w.step();
+    }
+    const heavy = w.id[0] === 1 ? 0 : 1;
+    expect(w.y[heavy]).toBeLessThan(start - 20);
+    expect(w.y[1 - heavy]).toBeGreaterThan(start + 20);
+  });
+
+  /** Grows a two-cell body whose cells contract (sign 1) or stretch (-1), and returns how far apart they sit. */
+  function bondLength(sign: number): number {
+    const w = new World('muscle', { startingCells: 1, cellCap: 50, mutationStep: 0 });
+    const g = w.genes;
+    g[Gene.Adhesion] = 1;
+    g[Gene.ColonySize] = 0; // 2 cells
+    g[Gene.Motility] = 0;
+    for (let k = SWITCH_BASE; k < GENE_COUNT; k++) g[k] = 0.5;
+    // Switch 1 turns fully on from the constant input and drives contraction.
+    g[SWITCH_BASE + 5] = 1;
+    g[SWITCH_BASE + SWITCH_INPUTS + Output.Contract] = sign > 0 ? 1 : 0;
+    w.refreshTraitsFor(0);
+    w.y[0] = 150;
+    for (let t = 0; t < 400; t++) {
+      for (let i = 0; i < w.n; i++) {
+        w.energy[i] = w.maxE[i];
+        w.lifespan[i] = 1e6;
+      }
+      w.step();
+    }
+    expect(w.n).toBe(2);
+    expect(w.bondCount[0]).toBe(1);
+    const d = Math.hypot(w.x[1] - w.x[0], w.y[1] - w.y[0], w.z[1] - w.z[0]);
+    return d / (w.radius[0] + w.radius[1]);
+  }
+
+  it('lets muscle cells shorten and stretch their bonds', () => {
+    expect(bondLength(1)).toBeLessThan(0.8);
+    expect(bondLength(-1)).toBeGreaterThan(1.2);
   });
 });
 
