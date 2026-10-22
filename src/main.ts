@@ -383,6 +383,12 @@ function closeInspector(): void {
   send({ type: 'inspect', id: null });
 }
 
+/** Whether a cell sinks, hangs or floats, from its weight trait (-1..1). */
+function weightText(density: number): string {
+  if (Math.abs(density) < 0.05) return `as heavy as water (${density.toFixed(2)})`;
+  return `${density > 0 ? 'sinks' : 'floats up'} at ${Math.abs(params.gravity * density).toFixed(3)}/tick (${density.toFixed(2)})`;
+}
+
 /** "none", or its size and what it costs per tick. */
 function flagellumText(motility: number, radius: number): string {
   if (motility < FLAGELLUM_MIN) return `none (motility ${motility.toFixed(2)})`;
@@ -420,6 +426,8 @@ function showBodyInspector(d: BodyDetail): void {
     ['Body radius', d.radius.toFixed(1)],
     ['Feeding L / V / E', `${pct(t.light)} / ${pct(t.vent)} / ${pct(t.engulf)}`],
     ['Flagella', flagellumText(t.motility, t.radius)],
+    ['Weight', weightText(t.density)],
+    ['Crawling', t.crawl.toFixed(2)],
     ['Germ cells', String(d.tissue[CELL_TYPES.indexOf('germ')])],
     ['Sex', t.sex.toFixed(2)],
   ];
@@ -449,6 +457,9 @@ function showInspector(d: CellDetail): void {
         ['Radius', t.radius.toFixed(2)],
         ['Feeding L / V / E', `${pct(t.light)} / ${pct(t.vent)} / ${pct(t.engulf)}`],
         ['Flagellum', flagellumText(t.motility, t.radius)],
+        ['Weight', weightText(t.density)],
+        ['Crawling (pili)', t.crawl.toFixed(2)],
+        ['Rhythm', `one beat every ${t.rhythm.toFixed(0)} ticks`],
         ['Tolerance', t.tolerance.toFixed(3)],
         ['Gene swapping', t.swap.toFixed(2)],
         ['Divides at', pct(t.divThreshold)],
@@ -568,6 +579,13 @@ const LIVE: [keyof Params, string, number, number][] = [
   ['lifespan', 'Base lifespan (ticks)', 300, 12000],
   ['mutationStep', 'Mutation step', 0, 0.2],
   ['maxSpeed', 'Top swimming speed', 0, 6],
+  ['gravity', 'Gravity (sinking speed)', 0, 0.2],
+  ['kFloat', 'Floating upkeep', 0, 0.01],
+  ['floorFriction', 'Floor friction', 0, 1],
+  ['crawlSpeed', 'Top crawling speed', 0, 3],
+  ['kCrawl', 'Pili upkeep', 0, 0.01],
+  ['muscleStrength', 'Muscle strength', 0, 0.6],
+  ['kMuscle', 'Muscle cost', 0, 0.01],
   ['bondRate', 'Bonding chance', 0, 0.1],
   ['kBond', 'Bond upkeep', 0, 0.02],
   ['shareRate', 'Sharing rate', 0, 0.3],
