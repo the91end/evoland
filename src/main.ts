@@ -205,8 +205,13 @@ $<HTMLSelectElement>('colour').addEventListener('change', (e) => {
   pond.colourMode = (e.target as HTMLSelectElement).value as ColourMode;
 });
 
+const randomSeed = () => String(Math.floor(Math.random() * 1e6));
 $('restart').addEventListener('click', () => {
-  seed = $<HTMLInputElement>('seed').value.trim() || String(Math.floor(Math.random() * 1e6));
+  seed = $<HTMLInputElement>('seed').value.trim() || randomSeed();
+  start();
+});
+$('newSeed').addEventListener('click', () => {
+  seed = randomSeed();
   start();
 });
 $<HTMLInputElement>('seed').addEventListener('keydown', (e) => {
