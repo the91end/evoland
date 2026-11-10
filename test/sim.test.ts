@@ -357,3 +357,22 @@ describe('zip', () => {
     expect(Array.from(unzipOne(zipOne('pond.evoland', data)))).toEqual(Array.from(data));
   });
 });
+
+describe('genetic algorithm', () => {
+  it('scores each generation and starts the next from bred founders', async () => {
+    const { GeneticRun } = await import('../src/sim/ga');
+    const run = new GeneticRun('ga', { cellCap: 400 }, { population: 20, duration: 60, elite: 0.1, fitness: 'cells' });
+    expect(run.world.n).toBe(20);
+    for (let k = 0; k < 20; k++) expect(run.world.clan[k]).toBe(k);
+    let gens = 0;
+    for (let t = 0; t < 200 && gens < 2; t++) if (run.step()) gens++;
+    expect(gens).toBe(2);
+    expect(run.gen).toBe(2);
+    expect(run.history.map((h) => h.gen)).toEqual([0, 1]);
+    for (const h of run.history) expect(h.best).toBeGreaterThanOrEqual(h.mean);
+    // A fresh generation starts with exactly one cell per founder.
+    expect(run.world.tick).toBeLessThan(60);
+    const w = run.world;
+    for (let i = 0; i < w.n; i++) expect(w.clan[i]).toBeLessThan(20);
+  });
+});

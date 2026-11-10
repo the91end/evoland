@@ -1,6 +1,7 @@
 import type { Params } from './sim/params';
 import type { SpeciesInfo } from './sim/species';
 import type { StatsSample, LineageRecord } from './sim/world';
+import type { GaSettings, GaStatus } from './sim/ga';
 
 /** Messages from the page to the simulation worker. */
 export type ToWorker =
@@ -12,7 +13,11 @@ export type ToWorker =
   | { type: 'inspect'; id: number | null }
   /** Save the whole pond to a file, or replace it with one. */
   | { type: 'save' }
-  | { type: 'load'; data: ArrayBuffer };
+  | { type: 'load'; data: ArrayBuffer }
+  /** Start the genetic algorithm (a fresh run), change its settings, or stop it. */
+  | { type: 'gaStart'; seed: string; params: Partial<Params>; settings: GaSettings }
+  | { type: 'gaSettings'; settings: GaSettings }
+  | { type: 'gaStop' };
 
 /** One rendered frame of the world, sent with transferable buffers. */
 export interface Frame {
@@ -183,5 +188,7 @@ export type FromWorker =
   | CellDetail
   | BodyDetail
   | { type: 'ready'; params: Params; seed: string; loaded: boolean }
+  /** Genetic algorithm progress; null when it is not running. */
+  | { type: 'ga'; status: GaStatus | null }
   | { type: 'saved'; data: ArrayBuffer; tick: number }
   | { type: 'loadFailed'; message: string };

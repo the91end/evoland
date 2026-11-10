@@ -5,6 +5,7 @@
  */
 import { World, bodyCells } from './sim/world';
 import { loadWorld, saveWorld } from './sim/save';
+import { GeneticRun } from './sim/ga';
 import { GENE_COUNT, OUTPUTS, SWITCHES, traitsOf } from './sim/genome';
 import type { BodyFrame, CellDetail, Frame, FromWorker, OrganismDetail, Stats, ToWorker } from './protocol';
 
@@ -24,6 +25,8 @@ const INSPECT_MS = 200;
 const BUDGET_MS = 30;
 
 let world: World | null = null;
+/** The genetic algorithm run, when one is going; its current pond is `world`. */
+let ga: GeneticRun | null = null;
 let speed = 1;
 let paused = false;
 let inspectId: number | null = null;
@@ -52,7 +55,27 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
   const m = e.data;
   switch (m.type) {
     case 'start':
+      ga = null;
+      post({ type: 'ga', status: null });
       begin(new World(m.seed, m.params), false);
+      break;
+    case 'gaStart':
+      ga = new GeneticRun(m.seed, m.params, m.settings);
+      begin(ga.world, false);
+      sendGa();
+      break;
+    case 'gaSettings':
+      if (ga) {
+        ga.update(m.settings);
+        sendGa();
+      }
+      break;
+    case 'gaStop':
+      if (ga && world) {
+        // The current pond carries on as an ordinary pond.
+        ga = null;
+        post({ type: 'ga', status: null });
+      }
       break;
     case 'save':
       if (world) {
@@ -65,7 +88,11 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
     case 'load':
       loadWorld(new Uint8Array(m.data)).then(
-        (w) => begin(w, true),
+        (w) => {
+          ga = null;
+          post({ type: 'ga', status: null });
+          begin(w, true);
+        },
         (err: unknown) => post({ type: 'loadFailed', message: err instanceof Error ? err.message : String(err) }),
       );
       break;
@@ -125,10 +152,28 @@ function loop(): void {
   let ran = 0;
   const fast = speed >= FAST_SPEED;
   const budget = fast ? FAST_BUDGET_MS : BUDGET_MS;
+  let newGen = false;
   while (owed >= 1 && performance.now() - start < budget) {
-    w.step();
+    if (ga) {
+      if (ga.step()) {
+        newGen = true;
+        owed = 0;
+        break;
+      }
+    } else w.step();
     owed -= 1;
     ran++;
+  }
+  if (newGen && ga) {
+    // A new generation is a new pond: start drawing it from scratch.
+    world = ga.world;
+    inspectId = null;
+    post({ type: 'ready', params: world.p, seed: world.seed, loaded: false });
+    sendGa();
+    sendFrame();
+    sendStats();
+    schedule(0);
+    return;
   }
   rateTicks += ran;
   const t = performance.now();
@@ -138,7 +183,10 @@ function loop(): void {
     rateStart = t;
   }
   if (ran > 0 && t - lastFrame >= (fast ? FAST_FRAME_MS : FRAME_MS)) sendFrame();
-  if (t - lastStats >= STATS_MS) sendStats();
+  if (t - lastStats >= STATS_MS) {
+    sendStats();
+    if (ga) sendGa();
+  }
   if (inspectId !== null && t - lastInspect >= INSPECT_MS) sendInspect();
 
   if (owed >= 1) schedule(0);
@@ -270,6 +318,10 @@ function sendFrame(): void {
     guests.buffer,
     guestTag.buffer,
   ]);
+}
+
+function sendGa(): void {
+  if (ga) post({ type: 'ga', status: ga.status() });
 }
 
 function sendStats(): void {

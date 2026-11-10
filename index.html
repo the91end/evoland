@@ -45,6 +45,25 @@
     </header>
 
     <aside id="side">
+      <section id="gaSection">
+        <h2>Genetic algorithm</h2>
+        <p class="muted small">Runs the pond in generations. Each generation starts from a set of founder cells and lasts a fixed time. Then every founder's family gets a fitness score, the best founders carry on and the rest are bred from the winners.</p>
+        <div class="gaFields">
+          <label>Population <input id="gaPop" type="number" min="10" max="1000" step="10" /></label>
+          <label>Generation length (ticks) <input id="gaDur" type="number" min="500" max="200000" step="500" /></label>
+          <label>Elites kept (%) <input id="gaElite" type="number" min="0" max="50" step="1" /></label>
+          <label>Fitness <select id="gaFit"></select></label>
+        </div>
+        <button id="gaStart" type="button" title="Start a new run from the seed in the box">Start GA</button>
+        <button id="gaStop" type="button" hidden title="Stop selecting; the current pond carries on as normal">Stop GA</button>
+        <p id="gaStatus" class="muted small"></p>
+        <canvas id="gaChart" height="110"></canvas>
+        <div class="legend">
+          <span><i style="background: #ffd166"></i>Best fitness</span>
+          <span><i style="background: #5fd3c6"></i>Average fitness</span>
+        </div>
+        <p id="gaBest" class="muted small"></p>
+      </section>
       <section>
         <h2>Population by species</h2>
         <canvas id="popChart" height="140"></canvas>
