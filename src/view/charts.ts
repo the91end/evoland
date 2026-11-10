@@ -85,6 +85,46 @@ export function drawPopulation(
   axes(g, w, h, maxY, history[history.length - 1].tick);
 }
 
+/** Best and average fitness per generation of the genetic algorithm. */
+export function drawFitness(canvas: HTMLCanvasElement, history: { gen: number; best: number; mean: number }[]): void {
+  const g = setup(canvas);
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  if (history.length < 1) return;
+  const maxY = Math.max(1e-6, ...history.map((s) => s.best)) * 1.05;
+  const x = (k: number) => (history.length === 1 ? w / 2 : (k / (history.length - 1)) * w);
+  const y = (v: number) => h - (v / maxY) * h;
+  for (const [key, col] of [
+    ['mean', '#5fd3c6'],
+    ['best', '#ffd166'],
+  ] as const) {
+    g.beginPath();
+    g.strokeStyle = col;
+    g.fillStyle = col;
+    g.lineWidth = 1.5;
+    for (let k = 0; k < history.length; k++) g.lineTo(x(k), y(history[k][key]));
+    g.stroke();
+    if (history.length === 1) g.fillRect(x(0) - 2, y(history[0][key]) - 2, 4, 4);
+  }
+  g.strokeStyle = GRID;
+  g.lineWidth = 1;
+  g.beginPath();
+  for (let k = 1; k <= 3; k++) {
+    const yy = Math.round(h - (h * k) / 4) + 0.5;
+    g.moveTo(0, yy);
+    g.lineTo(w, yy);
+  }
+  g.stroke();
+  g.fillStyle = TEXT;
+  g.font = '10px system-ui, sans-serif';
+  g.textBaseline = 'top';
+  g.fillText(maxY < 10 ? maxY.toFixed(2) : String(Math.round(maxY)), 2, 2);
+  g.textAlign = 'right';
+  g.textBaseline = 'bottom';
+  g.fillText(`generation ${history[history.length - 1].gen}`, w - 2, h - 2);
+  g.textAlign = 'left';
+}
+
 export const COLONY_SERIES: [keyof StatsSample, string, string][] = [
   ['bonded', 'Cells in colonies', '#5fd3c6'],
   ['biggestColony', 'Biggest colony', '#e9f6ff'],

@@ -84,6 +84,8 @@ export interface Body {
   id: number;
   /** Id of the cell whose body this was when it turned big. */
   founder: number;
+  /** Which starting cell the body descends from (see World.clan). */
+  clan: number;
   species: number;
   gen: number;
   genes: Float32Array;
@@ -233,6 +235,8 @@ export class World {
   readonly period: Float32Array;
   /** How firmly each cell is held in place this tick, by the floor and its own grip. */
   readonly hold: Float32Array;
+  /** Which starting cell each cell descends from (its index among the founders), or -1. */
+  readonly clan: Int32Array;
   /** Per colony root: centre (offset from the root cell, so wrapping is safe) and reach. */
   private readonly colonyX: Float32Array;
   private readonly colonyY: Float32Array;
@@ -367,6 +371,7 @@ export class World {
     this.crawl = new Float32Array(cap);
     this.period = new Float32Array(cap);
     this.hold = new Float32Array(cap);
+    this.clan = new Int32Array(cap);
     this.colonyX = new Float32Array(cap);
     this.colonyY = new Float32Array(cap);
     this.colonyZ = new Float32Array(cap);
@@ -461,6 +466,7 @@ export class World {
       );
       this.energy[i] = this.maxE[i] * rng.range(0.4, 0.7);
       this.age[i] = rng.int(p.lifespan / 2);
+      this.clan[i] = c;
     }
   }
 
@@ -505,6 +511,7 @@ export class World {
     this.engulfCd[i] = 0;
     this.force[i] = 0;
     this.hold[i] = 0;
+    this.clan[i] = -1;
     this.dead[i] = 0;
     this.bondCount[i] = 0;
     this.guestCount[i] = 0;
@@ -1089,6 +1096,7 @@ export class World {
     );
     recombine(this.genes, c * G, this.genes, egg * G, this.genes, sperm * G, rng);
     mutate(this.genes, c * G, this.mutRate[egg], p.mutationStep, rng);
+    this.clan[c] = this.clan[egg];
     this.refreshTraits(c);
     this.species[c] = this.species[egg];
     const rec = this.lineage.get(this.id[c]);
@@ -1145,6 +1153,7 @@ export class World {
     );
     mutate(this.genes, c * G, this.mutRate[i], p.mutationStep, rng);
     this.refreshTraits(c);
+    this.clan[c] = this.clan[i];
     this.species[c] = this.species[i];
     const rec = this.lineage.get(this.id[c]);
     if (rec) rec.species = this.species[i];
@@ -1275,7 +1284,7 @@ export class World {
       this.divThr, this.mutRate, this.adhesion, this.sharing, this.policing, this.symbiont,
       this.bondCount, this.gaveTotal, this.gotTotal, this.colony, this.colonySize, this.guestCount,
       this.colonyLimit, this.sexG, this.signalG, this.cellType, this.signal, this.gamete, this.noBond,
-      this.stage, this.divUp, this.divSpread,
+      this.stage, this.divUp, this.divSpread, this.dens, this.crawl, this.period, this.hold, this.clan,
     ];
     for (const a of arrays) a[to] = a[from];
     this.genes.copyWithin(to * GENE_COUNT, from * GENE_COUNT, (from + 1) * GENE_COUNT);
@@ -1706,6 +1715,7 @@ export class World {
       const body: Body = {
         id,
         founder: this.id[oldest],
+        clan: this.clan[oldest],
         species: this.species[oldest],
         gen: this.gen[oldest],
         genes,
@@ -1887,6 +1897,7 @@ export class World {
       );
       mutate(this.genes, c * GENE_COUNT, t.mutationRate, p.mutationStep, rng);
       this.refreshTraits(c);
+      this.clan[c] = b.clan;
       this.species[c] = b.species;
       const rec = this.lineage.get(this.id[c]);
       if (rec) rec.species = b.species;

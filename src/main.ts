@@ -3,9 +3,10 @@ import './style.css';
 import { FLAGELLUM_MIN, Pond, TYPE_COLOURS, type ColourMode } from './view/pond';
 import { drawOrganism, organismCanvas } from './view/organism';
 import { unzipOne, zipOne } from './zip';
-import { COLONY_SERIES, drawColonies, drawFamilyTree, drawFeeding, drawPopulation, drawTypes } from './view/charts';
+import { COLONY_SERIES, drawColonies, drawFamilyTree, drawFeeding, drawFitness, drawPopulation, drawTypes } from './view/charts';
+import { DEFAULT_GA, FITNESS_NAMES, type FitnessKind, type GaSettings, type GaStatus } from './sim/ga';
 import { DEFAULT_PARAMS, type Params } from './sim/params';
-import { CELL_TYPES, GENE_NAMES, OUTPUT_NAMES } from './sim/genome';
+import { CELL_TYPES, GENE_NAMES, OUTPUT_NAMES, traitsOf } from './sim/genome';
 import type { SpeciesInfo } from './sim/species';
 import type { BodyDetail, CellDetail, Frame, FromWorker, Stats, ToWorker } from './protocol';
 import SimWorker from './sim.worker.ts?worker&inline';
@@ -54,6 +55,16 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
     case 'ready':
       params = m.params;
       if (m.loaded) onLoaded(m.seed);
+      else if (gaStatus) {
+        // Each generation is a fresh pond.
+        pond.build(params);
+        speciesColours.clear();
+        closeInspector();
+      }
+      break;
+    case 'ga':
+      gaStatus = m.status;
+      showGa();
       break;
     case 'saved':
       download(m.data, m.tick);
@@ -172,6 +183,92 @@ function start(): void {
   send({ type: 'speed', speed: currentSpeed() });
   send({ type: 'pause', paused });
 }
+
+// ---------------------------------------------------------------------------
+// Genetic algorithm
+// ---------------------------------------------------------------------------
+
+let gaStatus: GaStatus | null = null;
+const GA_KEY = 'evoland-ga';
+
+function loadGaSettings(): GaSettings {
+  try {
+    return { ...DEFAULT_GA, ...JSON.parse(localStorage.getItem(GA_KEY) ?? '{}') };
+  } catch {
+    return { ...DEFAULT_GA };
+  }
+}
+
+const gaPop = $<HTMLInputElement>('gaPop');
+const gaDur = $<HTMLInputElement>('gaDur');
+const gaElite = $<HTMLInputElement>('gaElite');
+const gaFit = $<HTMLSelectElement>('gaFit');
+gaFit.innerHTML = (Object.keys(FITNESS_NAMES) as FitnessKind[])
+  .map((k) => `<option value="${k}">${FITNESS_NAMES[k]}</option>`)
+  .join('');
+{
+  const s = loadGaSettings();
+  gaPop.value = String(s.population);
+  gaDur.value = String(s.duration);
+  gaElite.value = String(Math.round(s.elite * 100));
+  gaFit.value = s.fitness;
+}
+
+function gaSettings(): GaSettings {
+  const num = (el: HTMLInputElement, lo: number, hi: number, d: number) => {
+    const v = Number(el.value);
+    return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d;
+  };
+  return {
+    population: Math.round(num(gaPop, 10, 1000, DEFAULT_GA.population)),
+    duration: Math.round(num(gaDur, 500, 200000, DEFAULT_GA.duration)),
+    elite: num(gaElite, 0, 50, DEFAULT_GA.elite * 100) / 100,
+    fitness: gaFit.value as FitnessKind,
+  };
+}
+
+function onGaChange(): void {
+  const s = gaSettings();
+  try {
+    localStorage.setItem(GA_KEY, JSON.stringify(s));
+  } catch {
+    // Storage may be blocked; the settings still apply to this run.
+  }
+  if (gaStatus) send({ type: 'gaSettings', settings: s });
+}
+for (const el of [gaPop, gaDur, gaElite, gaFit]) el.addEventListener('change', onGaChange);
+
+$('gaStart').addEventListener('click', () => {
+  seed = $<HTMLInputElement>('seed').value.trim() || randomSeed();
+  start();
+  send({ type: 'gaStart', seed, params: overrides, settings: gaSettings() });
+});
+$('gaStop').addEventListener('click', () => send({ type: 'gaStop' }));
+
+function showGa(): void {
+  const s = gaStatus;
+  $('gaStart').textContent = s ? 'Restart GA' : 'Start GA';
+  $('gaStop').hidden = !s;
+  if (!s) {
+    $('gaStatus').textContent = 'Not running. The pond evolves freely.';
+    return;
+  }
+  const last = s.history[s.history.length - 1];
+  $('gaStatus').textContent =
+    `Generation ${s.gen + 1} · tick ${s.tick.toLocaleString()} of ${s.settings.duration.toLocaleString()} · ` +
+    `${s.settings.population} founders · fitness: ${FITNESS_NAMES[s.settings.fitness].toLowerCase()}` +
+    (last ? ` · last generation: best ${fmtFit(last.best)}, average ${fmtFit(last.mean)}, ${last.survivors} families alive` : '');
+  if (!$('side').classList.contains('closed')) drawFitness($('gaChart'), s.history);
+  if (s.best) {
+    const t = traitsOf(s.best.genes);
+    $('gaBest').textContent =
+      `Best founder of the last generation scored ${fmtFit(s.best.fitness)}: radius ${t.radius.toFixed(1)}, ` +
+      `feeding L/V/E ${pct(t.light)} / ${pct(t.vent)} / ${pct(t.engulf)}, flagellum ${t.motility.toFixed(2)}, ` +
+      `crawling ${t.crawl.toFixed(2)}, weight ${t.density.toFixed(2)}, grows to ${t.colonyLimit} cells.`;
+  } else $('gaBest').textContent = '';
+}
+const fmtFit = (v: number) => (v < 10 ? v.toFixed(2) : Math.round(v).toLocaleString());
+showGa();
 
 // ---------------------------------------------------------------------------
 // Top bar

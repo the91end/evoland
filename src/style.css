@@ -44,6 +44,25 @@ body {
   font-size: 12px;
 }
 
+.gaFields {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0;
+}
+.gaFields label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.gaFields input {
+  width: 90px;
+}
+#gaStatus {
+  margin-top: 6px;
+}
+
 button,
 select,
 input {
