@@ -62,6 +62,9 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
         closeInspector();
       }
       break;
+    case 'follow':
+      if (pond.followId !== null) pond.followId = m.id;
+      break;
     case 'ga':
       gaStatus = m.status;
       showGa();
