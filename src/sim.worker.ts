@@ -30,6 +30,8 @@ let ga: GeneticRun | null = null;
 let speed = 1;
 let paused = false;
 let inspectId: number | null = null;
+/** The followed cell's organism-mates, nearest first, so the view can move to one when it dies. */
+let mates: number[] = [];
 
 let owed = 0;
 let lastTime = 0;
@@ -110,6 +112,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
     case 'inspect':
       inspectId = m.id;
+      mates = [];
       if (world && inspectId !== null) sendInspect();
       break;
   }
@@ -320,6 +323,43 @@ function sendFrame(): void {
   ]);
 }
 
+/** Notes the living cells of cell i's organism, nearest first. */
+function rememberMates(w: World, i: number): void {
+  mates = [];
+  if (w.colonySize[i] < 2) return;
+  const c = w.colony[i];
+  const W = w.p.width;
+  const wrap = (d: number) => (d > W / 2 ? d - W : d < -W / 2 ? d + W : d);
+  const near: [number, number][] = [];
+  for (let k = 0; k < w.n; k++) {
+    if (k === i || w.dead[k] || w.colony[k] !== c) continue;
+    near.push([Math.hypot(wrap(w.x[k] - w.x[i]), w.y[k] - w.y[i], wrap(w.z[k] - w.z[i])), w.id[k]]);
+  }
+  mates = near.sort((a, b) => a[0] - b[0]).map(([, id]) => id);
+}
+
+/**
+ * When the followed cell has died, follows the nearest cell of its
+ * organism that is still alive, or the big organism its body turned into.
+ * Returns false when nothing of the organism is left.
+ */
+function followMate(w: World, dead: number): boolean {
+  if (!mates.length) return false;
+  const alive = new Set<number>();
+  for (let k = 0; k < w.n; k++) if (!w.dead[k]) alive.add(w.id[k]);
+  let next = mates.find((id) => alive.has(id)) ?? null;
+  if (next === null) {
+    const family = new Set([dead, ...mates]);
+    next = w.bodies.find((b) => !b.dead && family.has(b.founder))?.id ?? null;
+  }
+  if (next === null) return false;
+  inspectId = next;
+  mates = [];
+  post({ type: 'follow', id: next });
+  sendInspect();
+  return true;
+}
+
 function sendGa(): void {
   if (ga) post({ type: 'ga', status: ga.status() });
 }
@@ -393,6 +433,8 @@ function sendInspect(): void {
     });
     return;
   }
+  if (i >= 0) rememberMates(w, i);
+  if (i < 0 && followMate(w, id)) return;
   if (i < 0) {
     // Dead: send what the lineage remembers so the panel can say so.
     post({

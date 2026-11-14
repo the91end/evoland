@@ -188,6 +188,8 @@ export type FromWorker =
   | CellDetail
   | BodyDetail
   | { type: 'ready'; params: Params; seed: string; loaded: boolean }
+  /** The followed cell died, so the view moves on to this cell or body of the same organism. */
+  | { type: 'follow'; id: number }
   /** Genetic algorithm progress; null when it is not running. */
   | { type: 'ga'; status: GaStatus | null }
   | { type: 'saved'; data: ArrayBuffer; tick: number }
